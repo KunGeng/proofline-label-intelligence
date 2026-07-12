@@ -213,6 +213,21 @@ describe('validateLabel', () => {
     });
   });
 
+  it('preserves an unreadable imported origin when the application origin is blank', () => {
+    const result = validateLabel(
+      fixture(
+        {},
+        { warningTypographyConfirmed: true },
+        { isImported: true, countryOfOrigin: '' },
+      ),
+    );
+
+    expect(byField(result, 'countryOfOrigin')).toMatchObject({
+      state: 'unreadable',
+    });
+    expect(result.overallState).toBe('unreadable');
+  });
+
   it('detects a title-cased warning heading as a mismatch', () => {
     const result = validateLabel(
       fixture({ warningHeading: candidate('Government Warning:') }),

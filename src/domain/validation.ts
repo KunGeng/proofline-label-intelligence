@@ -265,6 +265,16 @@ const countryOfOriginField = (
     );
   }
 
+  if (candidateState(input.extraction.countryOfOrigin) === 'unreadable') {
+    return withCandidate(
+      'countryOfOrigin',
+      'unreadable',
+      input.application.countryOfOrigin?.trim() || 'Country of origin required',
+      input.extraction.countryOfOrigin,
+      'No readable country of origin is available for an imported product.',
+    );
+  }
+
   if (!input.application.countryOfOrigin?.trim()) {
     return withCandidate(
       'countryOfOrigin',
