@@ -22,7 +22,7 @@ The prototype is deliberately scoped to **U.S. distilled-spirit labels**, matchi
 - Import status and country of origin when applicable
 - Government health warning statement
 
-The product includes a single-record form and an optional batch CSV keyed by image filename. It accepts JPEG, PNG, and WebP files up to 10 MB each, with a maximum of 50 images per batch, and keeps all work in browser memory for the current session.
+The product includes a single-record form and an optional batch CSV keyed by image filename. It accepts JPEG, PNG, and WebP files up to 10 MB each, with a maximum of 300 images per batch, and keeps all work in browser memory for the current session. The queue retains only a file handle until processing and then a thumbnail/result record, releasing full-size preview resources after a job completes.
 
 ### Explicit non-goals
 
@@ -140,7 +140,7 @@ The build must type-check and produce a production bundle. A browser smoke test 
 
 ## 9. Delivery
 
-The repository will contain source code, tests, sample assets, setup instructions, architecture rationale, data/privacy behavior, limitations, and a concise discussion of the future Azure deployment path. It will be deployed as a static site so a recruiter can open the demo without setup. The README will explicitly call the 50-image cap a browser-prototype guardrail and explain that a production 200–300-label workflow belongs behind durable Azure-backed queueing and storage. If the hosting environment cannot provide a public URL in this workspace, the repository will still include a production build and exact deployment instructions.
+The repository will contain source code, tests, sample assets, setup instructions, architecture rationale, data/privacy behavior, limitations, and a concise discussion of the future Azure deployment path. It will be deployed as a static site so a recruiter can open the demo without setup. The README will explain that the browser queue accepts up to 300 files but is a prototype implementation; production would add durable Azure-backed queueing, storage, audit records, and retry policies. If the hosting environment cannot provide a public URL in this workspace, the repository will still include a production build and exact deployment instructions.
 
 ## 10. Acceptance criteria
 
