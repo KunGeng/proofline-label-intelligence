@@ -13,6 +13,10 @@ const MAX_IMAGE_EDGE = 2_000;
 const MAX_CONCURRENT_WORKERS = 2;
 const LOCAL_OCR_PATH = '/ocr/';
 
+export const WORKER_INITIALIZATION_TIMEOUT_MS = 10_000;
+export type WorkerFactory = typeof Tesseract.createWorker;
+type OcrWorker = Awaited<ReturnType<WorkerFactory>>;
+
 let activeWorkers = 0;
 const waitingForWorker: Array<() => void> = [];
 
@@ -20,6 +24,16 @@ export interface PreparedImage {
   image: HTMLCanvasElement;
   thumbnailUrl: string;
 }
+
+export type ImagePreparer = (file: File) => Promise<PreparedImage>;
+
+export interface ExtractFromImageDependencies {
+  createWorker?: WorkerFactory;
+  prepareImage?: ImagePreparer;
+  initializationTimeoutMs?: number;
+}
+
+class ImageInputError extends Error {}
 
 const clampProgress = (value: number): number => Math.max(0, Math.min(1, value));
 
@@ -78,11 +92,11 @@ const imageSourceFor = async (
 
 export const prepareImage = async (file: File): Promise<PreparedImage> => {
   if (!ACCEPTED_IMAGE_TYPES.has(file.type)) {
-    throw new Error('Upload a JPEG, PNG, or WebP image.');
+    throw new ImageInputError('Upload a JPEG, PNG, or WebP image.');
   }
 
   if (file.size > MAX_IMAGE_BYTES) {
-    throw new Error('Images must be 10 MB or smaller.');
+    throw new ImageInputError('Images must be 10 MB or smaller.');
   }
 
   const source = await imageSourceFor(file);
@@ -143,54 +157,141 @@ const unreadableResult = (thumbnailUrl?: string): ExtractionJobResult => ({
   source: 'ocr',
 });
 
-export const extractFromImage: ExtractFromImage = async (file, onProgress) => {
-  let worker: Awaited<ReturnType<typeof Tesseract.createWorker>> | undefined;
-  let thumbnailUrl: string | undefined;
-  let workerSlotAcquired = false;
+const inputErrorResult = (
+  error: ImageInputError,
+  thumbnailUrl?: string,
+): ExtractionJobResult => ({
+  extraction: {},
+  rawText: '',
+  thumbnailUrl,
+  error: error.message,
+  source: 'ocr',
+});
 
-  onProgress({ phase: 'preparing', value: 0 });
-
+const terminateWorker = async (worker: OcrWorker): Promise<void> => {
   try {
-    const prepared = await prepareImage(file);
-    thumbnailUrl = prepared.thumbnailUrl;
-
-    await acquireWorker();
-    workerSlotAcquired = true;
-    worker = await Tesseract.createWorker('eng', undefined, {
-      workerPath: `${LOCAL_OCR_PATH}worker.min.js`,
-      corePath: LOCAL_OCR_PATH,
-      langPath: LOCAL_OCR_PATH,
-      gzip: true,
-      workerBlobURL: false,
-      logger: reportWorkerProgress(onProgress),
-    });
-
-    onProgress({ phase: 'reading', value: 0 });
-    const result = await worker.recognize(prepared.image);
-    const rawText = result.data.text;
-    const confidence = clampProgress(result.data.confidence / 100);
-
-    onProgress({ phase: 'validating', value: 1 });
-
-    return {
-      extraction: extractFromText(rawText, confidence),
-      rawText,
-      thumbnailUrl,
-      source: 'ocr',
-    };
+    await worker.terminate();
   } catch {
-    return unreadableResult(thumbnailUrl);
-  } finally {
-    if (worker) {
-      try {
-        await worker.terminate();
-      } catch {
-        // A failed worker is already represented as an unreadable result.
-      }
-    }
-
-    if (workerSlotAcquired) {
-      releaseWorker();
-    }
+    // A failed worker is already represented as an unreadable result.
   }
 };
+
+const initializeWorker = (
+  createWorker: WorkerFactory,
+  onProgress: ProgressListener,
+  initializationTimeoutMs: number,
+): Promise<OcrWorker> =>
+  new Promise((resolve, reject) => {
+    let settled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+    const rejectInitialization = (reason: unknown): void => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+      }
+
+      reject(
+        reason instanceof Error
+          ? reason
+          : new Error('OCR worker initialization failed.'),
+      );
+    };
+
+    const resolveInitialization = (worker: OcrWorker): void => {
+      if (settled) {
+        void terminateWorker(worker);
+        return;
+      }
+
+      settled = true;
+
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+      }
+
+      resolve(worker);
+    };
+
+    timeoutId = setTimeout(
+      () => rejectInitialization(new Error('OCR worker initialization timed out.')),
+      initializationTimeoutMs,
+    );
+
+    try {
+      void createWorker('eng', undefined, {
+        workerPath: `${LOCAL_OCR_PATH}worker.min.js`,
+        corePath: LOCAL_OCR_PATH,
+        langPath: LOCAL_OCR_PATH,
+        gzip: true,
+        workerBlobURL: false,
+        logger: reportWorkerProgress(onProgress),
+        errorHandler: (reason) => rejectInitialization(reason),
+      }).then(resolveInitialization, rejectInitialization);
+    } catch (error) {
+      rejectInitialization(error);
+    }
+  });
+
+export const createExtractFromImage = (
+  dependencies: ExtractFromImageDependencies = {},
+): ExtractFromImage => {
+  const createWorker = dependencies.createWorker ?? Tesseract.createWorker;
+  const imagePreparer = dependencies.prepareImage ?? prepareImage;
+  const initializationTimeoutMs =
+    dependencies.initializationTimeoutMs ?? WORKER_INITIALIZATION_TIMEOUT_MS;
+
+  return async (file, onProgress) => {
+    let worker: OcrWorker | undefined;
+    let thumbnailUrl: string | undefined;
+    let workerSlotAcquired = false;
+
+    onProgress({ phase: 'preparing', value: 0 });
+
+    try {
+      const prepared = await imagePreparer(file);
+      thumbnailUrl = prepared.thumbnailUrl;
+
+      await acquireWorker();
+      workerSlotAcquired = true;
+      worker = await initializeWorker(
+        createWorker,
+        onProgress,
+        initializationTimeoutMs,
+      );
+
+      onProgress({ phase: 'reading', value: 0 });
+      const result = await worker.recognize(prepared.image);
+      const rawText = result.data.text;
+      const confidence = clampProgress(result.data.confidence / 100);
+
+      onProgress({ phase: 'validating', value: 1 });
+
+      return {
+        extraction: extractFromText(rawText, confidence),
+        rawText,
+        thumbnailUrl,
+        source: 'ocr',
+      };
+    } catch (error) {
+      return error instanceof ImageInputError
+        ? inputErrorResult(error, thumbnailUrl)
+        : unreadableResult(thumbnailUrl);
+    } finally {
+      if (worker) {
+        await terminateWorker(worker);
+      }
+
+      if (workerSlotAcquired) {
+        releaseWorker();
+      }
+    }
+  };
+};
+
+export const extractFromImage = createExtractFromImage();

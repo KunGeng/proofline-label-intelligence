@@ -1,12 +1,6 @@
 import { CANONICAL_WARNING_BODY } from '../../domain/constants';
+import { OLD_TOM_RAW_TEXT } from '../demo/cases';
 import { extractFromText } from './parser';
-
-const OLD_TOM_RAW_TEXT = `OLD TOM DISTILLERY
-Kentucky Straight Bourbon Whiskey
-45% Alc./Vol. (90 Proof)
-750 mL
-Bottled by Old Tom Distillery, Louisville, KY
-GOVERNMENT WARNING: ${CANONICAL_WARNING_BODY}`;
 
 describe('extractFromText', () => {
   it('extracts the supplied bourbon facts from readable OCR text', () => {
@@ -20,6 +14,20 @@ describe('extractFromText', () => {
     expect(extraction.producerAddress?.value).toBe(
       'Old Tom Distillery, Louisville, KY',
     );
+  });
+
+  it('extracts a display-line brand without distillery vocabulary', () => {
+    const extraction = extractFromText(
+      `MAKER'S MARK
+Kentucky Straight Bourbon Whiskey
+45% Alc./Vol. (90 Proof)
+750 mL
+Bottled by Maker's Mark Distillery, Loretto, KY
+GOVERNMENT WARNING: ${CANONICAL_WARNING_BODY}`,
+      0.96,
+    );
+
+    expect(extraction.brandName?.value).toBe("MAKER'S MARK");
   });
 
   it('retains a malformed warning heading as an observed candidate for validation', () => {
