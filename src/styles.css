@@ -30,12 +30,14 @@
 
 html {
   background: var(--paper);
+  overflow-x: clip;
 }
 
 body {
   min-width: 320px;
   min-height: 100vh;
   margin: 0;
+  overflow-x: hidden;
 }
 
 button,
@@ -72,7 +74,30 @@ img {
 
 .app-frame {
   width: min(100% - 40px, 1440px);
+  min-width: 0;
   margin-inline: auto;
+}
+
+.skip-link {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 10;
+  padding: 10px 14px;
+  color: #fffefb;
+  font-size: 0.82rem;
+  font-weight: 800;
+  text-decoration: none;
+  background: var(--forest-deep);
+  border: 1px solid #fffefb;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  transform: translateY(-180%);
+  transition: transform 140ms ease;
+}
+
+.skip-link:focus-visible {
+  transform: translateY(0);
 }
 
 .topbar {
@@ -131,6 +156,7 @@ img {
 .topbar__nav {
   display: flex;
   gap: 4px;
+  min-width: 0;
   justify-content: center;
 }
 
@@ -165,6 +191,7 @@ img {
 
 main {
   padding-block: clamp(32px, 5vw, 72px) 72px;
+  scroll-margin-top: 24px;
 }
 
 h1,
@@ -409,6 +436,7 @@ h1,
   margin-bottom: 15px;
   font-size: clamp(2.6rem, 4.8vw, 5.25rem);
   line-height: 0.95;
+  overflow-wrap: anywhere;
 }
 
 .page-intro > p:last-child,
@@ -470,6 +498,7 @@ h1,
 .section-card__heading {
   display: flex;
   align-items: baseline;
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: 20px;
   padding-bottom: 19px;
@@ -583,12 +612,12 @@ input:not([type="checkbox"]):not([type="file"]):hover {
 .inline-error {
   margin: 16px 0 0;
   padding: 12px 14px;
-  color: #76271f;
+  color: #704308;
   font-size: 0.84rem;
   font-weight: 700;
   line-height: 1.4;
-  background: var(--red-soft);
-  border-left: 4px solid var(--red);
+  background: var(--amber-soft);
+  border-left: 4px solid var(--amber);
 }
 
 .dropzone {
@@ -716,7 +745,8 @@ input:not([type="checkbox"]):not([type="file"]):hover {
 }
 
 .review-state--error {
-  border-color: #d88f85;
+  background: #f4f8fa;
+  border-color: #a8b7bf;
 }
 
 .review-state--error .button {
@@ -727,6 +757,60 @@ input:not([type="checkbox"]):not([type="file"]):hover {
   justify-content: center;
   margin: 24px 0 0;
   text-align: left;
+}
+
+.review-state__loading-note {
+  margin: 24px 0 0;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  font-weight: 750;
+  letter-spacing: 0.02em;
+}
+
+.review-skeletons {
+  display: grid;
+  grid-template-columns: minmax(0, 0.72fr) minmax(0, 1.28fr);
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.review-skeleton {
+  position: relative;
+  min-height: 84px;
+  overflow: hidden;
+  background:
+    linear-gradient(90deg, rgb(23 75 56 / 5%), rgb(23 75 56 / 13%), rgb(23 75 56 / 5%)) 0 0 / 220% 100%,
+    #f6f8f1;
+  border: 1px solid var(--line);
+}
+
+.review-skeleton::before,
+.review-skeleton::after {
+  position: absolute;
+  right: 14%;
+  left: 14%;
+  height: 8px;
+  content: "";
+  background: rgb(23 75 56 / 13%);
+}
+
+.review-skeleton::before {
+  top: 28%;
+}
+
+.review-skeleton::after {
+  top: 54%;
+  right: 28%;
+}
+
+.review-skeleton--evidence {
+  min-height: 112px;
+}
+
+.review-skeleton--comparison {
+  background:
+    repeating-linear-gradient(180deg, transparent 0 22px, rgb(23 75 56 / 9%) 22px 23px),
+    #f6f8f1;
 }
 
 .decision {
@@ -787,6 +871,7 @@ input:not([type="checkbox"]):not([type="file"]):hover {
   font-weight: 800;
   letter-spacing: 0.025em;
   white-space: nowrap;
+  border: 1px solid currentColor;
   border-radius: 999px;
 }
 
@@ -1082,6 +1167,10 @@ td:nth-child(4) {
   border-left: 3px solid var(--forest);
 }
 
+.correction-form__error {
+  margin: 0;
+}
+
 .correction-form input {
   min-height: 38px !important;
   padding: 8px 9px !important;
@@ -1182,12 +1271,12 @@ td:nth-child(4) {
 .batch-alert {
   padding: 14px 16px;
   margin-top: 18px;
-  color: #76271f;
+  color: #704308;
   font-size: 0.78rem;
   font-weight: 650;
   line-height: 1.45;
-  background: var(--red-soft);
-  border-left: 4px solid var(--red);
+  background: var(--amber-soft);
+  border-left: 4px solid var(--amber);
 }
 
 .batch-alert strong {
@@ -1379,6 +1468,7 @@ td:nth-child(4) {
   font-weight: 800;
   letter-spacing: 0.02em;
   background: #e6ece5;
+  border: 1px solid currentColor;
   border-radius: 999px;
 }
 
@@ -1388,14 +1478,14 @@ td:nth-child(4) {
 }
 
 .batch-status--error {
-  color: #7a241e;
-  background: #f7d6d0;
+  color: #33434c;
+  background: #dae4e8;
 }
 
 .batch-row-error {
   max-width: 28ch;
   margin-bottom: 0;
-  color: #76271f;
+  color: #45555e;
 }
 
 .batch-review-count {
@@ -1420,6 +1510,44 @@ td:nth-child(4) {
     linear-gradient(135deg, transparent 0 49%, rgb(23 75 56 / 4%) 49% 50%, transparent 50%) 0 0 / 22px 22px,
     #fbfcf8;
   border: 1px dashed var(--line-strong);
+}
+
+.empty-state-illustration {
+  width: min(176px, 72%);
+  height: auto;
+  margin-bottom: 10px;
+}
+
+.empty-state-illustration__ground,
+.empty-state-illustration__line {
+  fill: none;
+  stroke: var(--forest);
+  stroke-linecap: round;
+  stroke-width: 3;
+}
+
+.empty-state-illustration__ground {
+  opacity: 0.35;
+}
+
+.empty-state-illustration__card {
+  fill: #fffefb;
+  stroke: var(--line-strong);
+  stroke-width: 2;
+}
+
+.empty-state-illustration__seal {
+  fill: var(--lime);
+  stroke: var(--forest);
+  stroke-width: 2;
+}
+
+.empty-state-illustration__check {
+  fill: none;
+  stroke: var(--forest-deep);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 3;
 }
 
 .batch-empty-state .eyebrow {
@@ -1656,6 +1784,64 @@ td:nth-child(4) {
 
   .processing-note__bar {
     width: 100%;
+  }
+
+  .review-skeletons {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 420px) {
+  .app-frame {
+    width: min(100% - 24px, 1440px);
+  }
+
+  .brand {
+    gap: 8px;
+  }
+
+  .brand__mark {
+    width: 31px;
+    height: 31px;
+  }
+
+  .brand strong {
+    font-size: 1.05rem;
+  }
+
+  .brand small {
+    font-size: 0.56rem;
+  }
+
+  .topbar__nav {
+    gap: 0;
+    justify-content: stretch;
+  }
+
+  .nav-link {
+    flex: 1 1 0;
+    min-width: 0;
+    padding-inline: 5px;
+    font-size: 0.73rem;
+  }
+
+  .section-card {
+    padding: 18px;
+  }
+
+  .section-card__heading {
+    gap: 9px;
+  }
+
+  .section-card h2 {
+    font-size: 1.55rem;
+  }
+
+  .dropzone,
+  .batch-dropzone,
+  .batch-csv-panel {
+    min-width: 0;
+    padding-inline: 18px;
   }
 }
 

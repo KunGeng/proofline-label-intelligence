@@ -18,7 +18,7 @@ import {
   type QueueStatus,
   type ReviewQueue,
 } from '../features/intake/queue';
-import { ScopeNotice, SectionCard, StatusBadge } from './ui';
+import { QueueEmptyIllustration, ScopeNotice, SectionCard, StatusBadge } from './ui';
 
 const MAX_BATCH_FILES = 300;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -421,6 +421,7 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
                 multiple
                 onChange={chooseImages}
                 aria-describedby={fileErrors.length > 0 ? 'batch-file-errors' : undefined}
+                aria-invalid={fileErrors.length > 0 ? true : undefined}
               />
             </label>
             {selectedFiles.length > 0 ? (
@@ -445,6 +446,7 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
                 accept=".csv,text/csv"
                 onChange={(event) => void chooseCsv(event)}
                 aria-describedby={csvErrors.length > 0 ? 'batch-csv-errors' : undefined}
+                aria-invalid={csvErrors.length > 0 ? true : undefined}
               />
             </label>
             {csvName ? (
@@ -489,7 +491,14 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
 
       <SectionCard title="Review queue" eyebrow="02 / Evidence status" className="batch-results">
         <div className="batch-toolbar">
-          <div className="batch-progress" aria-live="polite">
+          <div
+            className="batch-progress"
+            role="status"
+            aria-label="Batch review progress"
+            aria-live="polite"
+            aria-atomic="true"
+            aria-busy={isProcessing ? 'true' : undefined}
+          >
             <strong>{processedCount} of {items.length} processed</strong>
             <span>Two local workers maximum</span>
           </div>
@@ -552,7 +561,9 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
                         </th>
                         <td>
                           {statusFor(item)}
-                          {item.error ? <p className="batch-row-error">{item.error}</p> : null}
+                          {item.error ? (
+                            <p className="batch-row-error" role="alert">{item.error}</p>
+                          ) : null}
                         </td>
                         <td>{item.result ? counts.match : '—'}</td>
                         <td>{item.result ? counts.mismatch : '—'}</td>
@@ -585,12 +596,14 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
             </div>
           ) : (
             <div className="batch-empty-state" role="status">
+              <QueueEmptyIllustration />
               <p className="eyebrow">No matching labels</p>
               <h3>Adjust the filters to see another review result.</h3>
             </div>
           )
         ) : (
           <div className="batch-empty-state" role="status">
+            <QueueEmptyIllustration />
             <p className="eyebrow">Ready when you are</p>
             <h3>Your local review queue will appear here.</h3>
             <p>Choose label images above, then begin a batch to see each item arrive as it completes.</p>

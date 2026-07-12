@@ -59,6 +59,8 @@ const confidenceText = (confidence: number): string =>
   `${Math.round(confidence * 100)}% confidence`;
 
 const correctionIdFor = (field: CandidateField): string => `correction-${field}`;
+const correctionErrorIdFor = (field: CandidateField): string =>
+  `${correctionIdFor(field)}-error`;
 
 export function ReviewDesk({
   title,
@@ -77,6 +79,7 @@ export function ReviewDesk({
 }: ReviewDeskProps) {
   const [editingField, setEditingField] = useState<CandidateField>();
   const [correction, setCorrection] = useState('');
+  const [correctionError, setCorrectionError] = useState<string>();
   const [restoreFocusField, setRestoreFocusField] = useState<CandidateField>();
   const correctionInputRef = useRef<HTMLInputElement>(null);
   const correctionTriggerRefs = useRef<
@@ -102,22 +105,29 @@ export function ReviewDesk({
     setRestoreFocusField(undefined);
     setEditingField(field);
     setCorrection(candidate.value);
+    setCorrectionError(undefined);
   };
 
   const closeCorrection = (field: CandidateField): void => {
     setRestoreFocusField(field);
     setEditingField(undefined);
     setCorrection('');
+    setCorrectionError(undefined);
   };
 
   const saveCorrection = (field: CandidateField): void => {
     if (!correction.trim()) {
+      setCorrectionError('Enter a corrected value before saving.');
       return;
     }
 
     onCorrectCandidate(field, correction.trim());
     closeCorrection(field);
   };
+
+  const progressPercent = typeof progress === 'number'
+    ? Math.round(Math.max(0, Math.min(1, progress)) * 100)
+    : undefined;
 
   return (
     <section className="review-desk" aria-labelledby="review-heading">
@@ -135,21 +145,41 @@ export function ReviewDesk({
       <ScopeNotice />
 
       {phase === 'processing' ? (
-        <section className="review-state review-state--processing" aria-live="polite">
+        <section
+          className="review-state review-state--processing"
+          role="status"
+          aria-label="Label extraction progress"
+          aria-live="polite"
+          aria-atomic="true"
+          aria-busy="true"
+        >
           <p className="eyebrow">Reading local evidence</p>
           <h2>Extracting label evidence</h2>
           <p>
             Proofline is reading this label locally. Findings and visual-confirmation
             controls will appear only after extraction finishes.
           </p>
-          {typeof progress === 'number' ? (
-            <div className="processing-note">
+          {progressPercent !== undefined ? (
+            <div
+              className="processing-note"
+              role="progressbar"
+              aria-label="OCR evidence extraction"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={progressPercent}
+              aria-valuetext={`${progressPercent}% complete`}
+            >
               <span className="processing-note__bar" aria-hidden="true">
-                <span style={{ width: `${Math.round(progress * 100)}%` }} />
+                <span style={{ width: `${progressPercent}%` }} />
               </span>
-              <p>Reading label evidence… {Math.round(progress * 100)}%</p>
+              <p>Reading label evidence… {progressPercent}%</p>
             </div>
           ) : null}
+          <p className="review-state__loading-note">Preparing comparison workspace…</p>
+          <div className="review-skeletons" aria-hidden="true">
+            <div className="review-skeleton review-skeleton--evidence" />
+            <div className="review-skeleton review-skeleton--comparison" />
+          </div>
         </section>
       ) : null}
 
@@ -287,9 +317,27 @@ export function ReviewDesk({
                                   <input
                                     ref={correctionInputRef}
                                     value={correction}
-                                    onChange={(event) => setCorrection(event.target.value)}
+                                    onChange={(event) => {
+                                      setCorrection(event.target.value);
+                                      setCorrectionError(undefined);
+                                    }}
+                                    aria-invalid={correctionError ? true : undefined}
+                                    aria-describedby={
+                                      correctionError
+                                        ? correctionErrorIdFor(candidateField)
+                                        : undefined
+                                    }
                                   />
                                 </label>
+                                {correctionError ? (
+                                  <p
+                                    className="inline-error correction-form__error"
+                                    id={correctionErrorIdFor(candidateField)}
+                                    role="alert"
+                                  >
+                                    {correctionError}
+                                  </p>
+                                ) : null}
                                 <div>
                                   <button
                                     className="text-button"

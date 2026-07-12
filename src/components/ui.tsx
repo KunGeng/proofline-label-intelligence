@@ -41,6 +41,23 @@ export function ScopeNotice() {
   );
 }
 
+export function QueueEmptyIllustration() {
+  return (
+    <svg
+      className="empty-state-illustration"
+      viewBox="0 0 176 112"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path d="M26 83h124" className="empty-state-illustration__ground" />
+      <rect x="48" y="29" width="80" height="48" rx="4" className="empty-state-illustration__card" />
+      <path d="M65 45h47M65 56h32M65 67h23" className="empty-state-illustration__line" />
+      <circle cx="132" cy="33" r="18" className="empty-state-illustration__seal" />
+      <path d="m124 33 5 5 10-12" className="empty-state-illustration__check" />
+    </svg>
+  );
+}
+
 export function SectionCard({
   title,
   eyebrow,

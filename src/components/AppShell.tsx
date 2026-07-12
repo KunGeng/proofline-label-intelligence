@@ -19,6 +19,9 @@ export function AppShell({
 }: AppShellProps) {
   return (
     <div className="app-frame">
+      <a className="skip-link" href="#main-content">
+        Skip to review
+      </a>
       <header className="topbar">
         <button className="brand" type="button" onClick={onHome} aria-label="Go to Proofline home">
           <span className="brand__mark" aria-hidden="true">P</span>
@@ -55,7 +58,7 @@ export function AppShell({
         </nav>
         <p className="session-note"><span aria-hidden="true">●</span> Browser session only</p>
       </header>
-      <main id="main-content">{children}</main>
+      <main id="main-content" tabIndex={-1}>{children}</main>
     </div>
   );
 }

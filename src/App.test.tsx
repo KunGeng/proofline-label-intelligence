@@ -458,3 +458,70 @@ it('focuses a disclosed correction editor and restores its trigger after closing
   expect(trigger).not.toHaveAttribute('aria-controls');
   expect(trigger).toHaveFocus();
 });
+
+it('explains unsupported files without losing the current form values', async () => {
+  const user = userEvent.setup({ applyAccept: false });
+  render(<App />);
+
+  await user.click(screen.getByRole('button', { name: /review a label/i }));
+  const brandName = screen.getByRole('textbox', { name: /^brand name$/i });
+  const imageInput = screen.getByLabelText(/^choose label image$/i);
+
+  await user.type(brandName, 'Old Tom');
+  await user.upload(
+    imageInput,
+    new File(['notes'], 'notes.txt', { type: 'text/plain' }),
+  );
+
+  expect(screen.getByRole('alert')).toHaveTextContent(/jpeg, png, or webp/i);
+  expect(brandName).toHaveValue('Old Tom');
+  expect(imageInput).toHaveAttribute('aria-invalid', 'true');
+});
+
+it('keeps the primary review area keyboard reachable', async () => {
+  const user = userEvent.setup();
+  render(<App />);
+
+  await user.tab();
+
+  expect(document.activeElement).toHaveAccessibleName(/skip to review/i);
+});
+
+it('announces OCR progress while the evidence workspace is loading', async () => {
+  const user = userEvent.setup();
+  const pending = deferred<ExtractionJobResult>();
+  vi.mocked(extractFromImage).mockImplementationOnce((_file, onProgress) => {
+    onProgress({ phase: 'reading', value: 0.42 });
+    return pending.promise;
+  });
+
+  await startManualReview(user);
+
+  const progress = screen.getByRole('status', { name: /label extraction progress/i });
+  expect(progress).toHaveAttribute('aria-live', 'polite');
+  expect(progress).toHaveAttribute('aria-busy', 'true');
+  expect(progress).toHaveTextContent(/reading label evidence… 42%/i);
+  expect(screen.getByText(/preparing comparison workspace/i)).toBeInTheDocument();
+
+  pending.resolve({ extraction: {}, rawText: 'OLD TOM', source: 'ocr' });
+  expect(await screen.findByRole('table')).toBeInTheDocument();
+});
+
+it('announces an empty evidence correction as a validation error', async () => {
+  const user = userEvent.setup();
+  render(<App />);
+
+  await user.click(screen.getByRole('button', { name: /open guided demo/i }));
+  await user.click(screen.getByRole('button', { name: /correct brand name candidate/i }));
+
+  const correction = screen.getByRole('textbox', {
+    name: /brand name corrected candidate/i,
+  });
+  await user.clear(correction);
+  await user.click(screen.getByRole('button', { name: /save brand name correction/i }));
+
+  expect(screen.getByRole('alert')).toHaveTextContent(
+    'Enter a corrected value before saving.',
+  );
+  expect(correction).toHaveAttribute('aria-invalid', 'true');
+});

@@ -231,6 +231,7 @@ export function IntakeForm({ onCancel, onSubmit }: IntakeFormProps) {
                 accept="image/jpeg,image/png,image/webp"
                 onChange={onFileChange}
                 aria-describedby={fileError ? 'file-error' : undefined}
+                aria-invalid={fileError ? true : undefined}
               />
             </label>
             {file ? <p className="selected-file">Ready: <strong>{file.name}</strong></p> : null}
