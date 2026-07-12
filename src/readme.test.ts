@@ -46,6 +46,6 @@ describe('submission documentation', () => {
       scripts?: Record<string, string>;
     };
 
-    expect(packageJson.scripts?.preview).toBe('vite preview');
+    expect(packageJson.scripts?.preview).toContain('vite preview');
   });
 });

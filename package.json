@@ -10,7 +10,7 @@
     "test": "vitest",
     "test:run": "vitest run",
     "lint": "tsc --noEmit",
-    "preview": "vite preview"
+    "preview": "vite preview --outDir dist/client"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",

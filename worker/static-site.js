@@ -14,6 +14,6 @@ export default {
       return response;
     }
 
-    return env.ASSETS.fetch(new Request(new URL('/', request.url), request));
+    return env.ASSETS.fetch(new Request(new URL('/index.html', request.url), request));
   },
 };

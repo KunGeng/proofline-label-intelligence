@@ -156,11 +156,13 @@ pnpm install --frozen-lockfile
 pnpm build
 ```
 
-Configure the host with:
+Configure a conventional static host with:
 
 - **Build command:** `pnpm build`
-- **Publish directory:** `dist`
-- **Runtime requirement:** serve the `public/ocr/` assets copied into `dist/ocr/` from the same origin as the application; do not replace them with a third-party OCR CDN.
+- **Publish directory:** `dist/client`
+- **Runtime requirement:** serve the `public/ocr/` assets copied into `dist/client/ocr/` from the same origin as the application; do not replace them with a third-party OCR CDN.
+
+The supported Sites deployment packages the complete `dist/` directory because it also includes a small Worker entry at `dist/server/index.js`; its static assets are under `dist/client/`.
 
 After publication, smoke-test a real label upload and the batch template from the deployed origin. Confirm that the network panel contains only static-app/OCR asset loads and no image or application-data upload.
 
