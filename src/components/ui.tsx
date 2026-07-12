@@ -28,6 +28,19 @@ export function SourceChip({ source }: { source: CandidateSource }) {
   return <span className="source-chip">{sourceLabels[source]}</span>;
 }
 
+export function ScopeNotice() {
+  return (
+    <aside className="scope-notice" role="note" aria-label="Prototype scope">
+      <strong>Prototype scope</strong>
+      <p>
+        Proofline currently supports U.S. distilled-spirit labels. Other beverage
+        classes and physical-label/typography requirements remain outside automated
+        validation.
+      </p>
+    </aside>
+  );
+}
+
 export function SectionCard({
   title,
   eyebrow,

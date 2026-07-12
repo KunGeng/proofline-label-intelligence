@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { fieldLabel } from '../domain/validation';
 import type {
   Candidate,
@@ -7,14 +7,22 @@ import type {
   ReviewState,
   VerificationResult,
 } from '../domain/types';
-import { SectionCard, SourceChip, StatusBadge, statusLabel } from './ui';
+import {
+  ScopeNotice,
+  SectionCard,
+  SourceChip,
+  StatusBadge,
+  statusLabel,
+} from './ui';
 
 export type CandidateField = keyof LabelExtraction;
+export type ReviewDeskPhase = 'processing' | 'error' | 'ready';
 
 interface ReviewDeskProps {
   title: string;
   extraction: LabelExtraction;
-  result: VerificationResult;
+  result?: VerificationResult;
+  phase: ReviewDeskPhase;
   rawText: string;
   imageUrl?: string;
   disclosure?: string;
@@ -50,10 +58,13 @@ const summaryFor = (state: ReviewState): string => {
 const confidenceText = (confidence: number): string =>
   `${Math.round(confidence * 100)}% confidence`;
 
+const correctionIdFor = (field: CandidateField): string => `correction-${field}`;
+
 export function ReviewDesk({
   title,
   extraction,
   result,
+  phase,
   rawText,
   imageUrl,
   disclosure,
@@ -66,13 +77,37 @@ export function ReviewDesk({
 }: ReviewDeskProps) {
   const [editingField, setEditingField] = useState<CandidateField>();
   const [correction, setCorrection] = useState('');
-  const warningTypography = result.fields.find(
+  const [restoreFocusField, setRestoreFocusField] = useState<CandidateField>();
+  const correctionInputRef = useRef<HTMLInputElement>(null);
+  const correctionTriggerRefs = useRef<
+    Partial<Record<CandidateField, HTMLButtonElement | null>>
+  >({});
+  const warningTypography = result?.fields.find(
     (field) => field.field === 'warningTypography',
   );
 
+  useEffect(() => {
+    if (editingField) {
+      correctionInputRef.current?.focus();
+      return;
+    }
+
+    if (restoreFocusField) {
+      correctionTriggerRefs.current[restoreFocusField]?.focus();
+      setRestoreFocusField(undefined);
+    }
+  }, [editingField, restoreFocusField]);
+
   const openCorrection = (field: CandidateField, candidate: Candidate): void => {
+    setRestoreFocusField(undefined);
     setEditingField(field);
     setCorrection(candidate.value);
+  };
+
+  const closeCorrection = (field: CandidateField): void => {
+    setRestoreFocusField(field);
+    setEditingField(undefined);
+    setCorrection('');
   };
 
   const saveCorrection = (field: CandidateField): void => {
@@ -81,7 +116,7 @@ export function ReviewDesk({
     }
 
     onCorrectCandidate(field, correction.trim());
-    setEditingField(undefined);
+    closeCorrection(field);
   };
 
   return (
@@ -97,6 +132,43 @@ export function ReviewDesk({
         </button>
       </div>
 
+      <ScopeNotice />
+
+      {phase === 'processing' ? (
+        <section className="review-state review-state--processing" aria-live="polite">
+          <p className="eyebrow">Reading local evidence</p>
+          <h2>Extracting label evidence</h2>
+          <p>
+            Proofline is reading this label locally. Findings and visual-confirmation
+            controls will appear only after extraction finishes.
+          </p>
+          {typeof progress === 'number' ? (
+            <div className="processing-note">
+              <span className="processing-note__bar" aria-hidden="true">
+                <span style={{ width: `${Math.round(progress * 100)}%` }} />
+              </span>
+              <p>Reading label evidence… {Math.round(progress * 100)}%</p>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+
+      {phase === 'error' ? (
+        <section className="review-state review-state--error" role="alert">
+          <p className="eyebrow">Extraction needs attention</p>
+          <h2>Label evidence could not be extracted.</h2>
+          <p>
+            {error ?? 'Try a clearer image or begin a new evidence review.'}
+          </p>
+          <button type="button" className="button button--secondary" onClick={onStartAnother}>
+            Choose another label
+          </button>
+        </section>
+      ) : null}
+
+      {phase !== 'ready' || !result ? null : (
+        <>
+
       <section className={`decision decision--${result.overallState}`} aria-live="polite">
         <div>
           <p className="eyebrow">Comparison result</p>
@@ -105,17 +177,6 @@ export function ReviewDesk({
         </div>
         <StatusBadge state={result.overallState} />
       </section>
-
-      {typeof progress === 'number' ? (
-        <section className="processing-note" aria-live="polite">
-          <span className="processing-note__bar" aria-hidden="true">
-            <span style={{ width: `${Math.round(progress * 100)}%` }} />
-          </span>
-          <p>Reading label evidence… {Math.round(progress * 100)}%</p>
-        </section>
-      ) : null}
-
-      {error ? <p className="inline-error" role="alert">{error}</p> : null}
 
       <div className="review-desk__grid">
         <aside className="evidence-column" aria-label="Label evidence">
@@ -191,11 +252,38 @@ export function ReviewDesk({
                               <span>{confidenceText(candidate.confidence)}</span>
                             </div>
                             <p className="raw-evidence">Raw OCR: {candidate.rawText}</p>
+                            <button
+                              ref={(element) => {
+                                correctionTriggerRefs.current[candidateField] = element;
+                              }}
+                              className="text-button"
+                              type="button"
+                              aria-expanded={isEditing}
+                              aria-controls={correctionIdFor(candidateField)}
+                              onClick={() => {
+                                if (isEditing) {
+                                  closeCorrection(candidateField);
+                                  return;
+                                }
+
+                                openCorrection(candidateField, candidate);
+                              }}
+                            >
+                              {isEditing
+                                ? `Close ${fieldLabel(fieldResult.field)} correction`
+                                : `Correct ${fieldLabel(fieldResult.field)} candidate`}
+                            </button>
                             {isEditing ? (
-                              <div className="correction-form">
+                              <div
+                                className="correction-form"
+                                id={correctionIdFor(candidateField)}
+                                role="region"
+                                aria-label={`${fieldLabel(fieldResult.field)} correction`}
+                              >
                                 <label>
                                   {fieldLabel(fieldResult.field)} corrected candidate
                                   <input
+                                    ref={correctionInputRef}
                                     value={correction}
                                     onChange={(event) => setCorrection(event.target.value)}
                                   />
@@ -211,21 +299,13 @@ export function ReviewDesk({
                                   <button
                                     className="text-button"
                                     type="button"
-                                    onClick={() => setEditingField(undefined)}
+                                    onClick={() => closeCorrection(candidateField)}
                                   >
                                     Cancel correction
                                   </button>
                                 </div>
                               </div>
-                            ) : (
-                              <button
-                                className="text-button"
-                                type="button"
-                                onClick={() => openCorrection(candidateField, candidate)}
-                              >
-                                Correct {fieldLabel(fieldResult.field)} candidate
-                              </button>
-                            )}
+                            ) : null}
                           </div>
                         ) : (
                           <span className="muted">No extracted candidate</span>
@@ -243,6 +323,8 @@ export function ReviewDesk({
           </div>
         </SectionCard>
       </div>
+        </>
+      )}
     </section>
   );
 }

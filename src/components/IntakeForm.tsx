@@ -1,6 +1,6 @@
 import { useState, type ChangeEvent, type DragEvent, type FormEvent } from 'react';
 import type { ApplicationData } from '../domain/types';
-import { SectionCard } from './ui';
+import { ScopeNotice, SectionCard } from './ui';
 
 const ACCEPTED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -118,6 +118,8 @@ export function IntakeForm({ onCancel, onSubmit }: IntakeFormProps) {
           in this browser session.
         </p>
       </div>
+
+      <ScopeNotice />
 
       <form className="intake-form" onSubmit={submit} noValidate>
         <SectionCard title="Application facts" eyebrow="01 / Declared information">

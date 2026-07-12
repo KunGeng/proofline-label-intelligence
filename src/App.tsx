@@ -9,6 +9,7 @@ import { oldTomDemo, OLD_TOM_RAW_TEXT } from './features/demo/cases';
 import { extractFromImage } from './features/extraction/ocr';
 
 interface ActiveReview {
+  phase: 'processing' | 'error' | 'ready';
   title: string;
   application: ApplicationData;
   extraction: LabelExtraction;
@@ -77,6 +78,7 @@ export function App() {
     extractionRun.current += 1;
     setWarningTypographyConfirmed(false);
     setReview({
+      phase: 'ready',
       title: oldTomDemo.title,
       application: oldTomDemo.application,
       extraction: asFixtureEvidence(oldTomDemo.extraction),
@@ -94,6 +96,7 @@ export function App() {
 
     setWarningTypographyConfirmed(false);
     setReview({
+      phase: 'processing',
       title: file.name,
       application,
       extraction: {},
@@ -126,6 +129,7 @@ export function App() {
               extraction: output.extraction,
               rawText: output.rawText,
               progress: undefined,
+              phase: output.error ? 'error' : 'ready',
               error: output.error ? friendlyExtractionError(output.error) : undefined,
             }
           : current,
@@ -139,6 +143,7 @@ export function App() {
         current
           ? {
               ...current,
+              phase: 'error',
               progress: undefined,
               error: 'OCR could not complete. Try a clearer image or begin a new evidence review.',
             }
@@ -174,17 +179,21 @@ export function App() {
     }
 
     if (review) {
-      const result = validateLabel({
-        application: review.application,
-        extraction: review.extraction,
-        flags: { warningTypographyConfirmed },
-      });
+      const result =
+        review.phase === 'ready'
+          ? validateLabel({
+              application: review.application,
+              extraction: review.extraction,
+              flags: { warningTypographyConfirmed },
+            })
+          : undefined;
 
       return (
         <ReviewDesk
           title={review.title}
           extraction={review.extraction}
           result={result}
+          phase={review.phase}
           rawText={review.rawText}
           imageUrl={review.imageUrl}
           disclosure={review.disclosure}
