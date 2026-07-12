@@ -1,6 +1,8 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { App } from './App';
+import { CANONICAL_WARNING_BODY, CANONICAL_WARNING_HEADING } from './domain/constants';
+import type { Candidate } from './domain/types';
 import { extractFromImage } from './features/extraction/ocr';
 import type { ExtractionJobResult } from './features/extraction/types';
 import { serializeResults } from './features/intake/export';
@@ -78,6 +80,13 @@ const batchErrorFixture: QueueItem[] = [
   },
 ];
 
+const ocrCandidate = (value: string): Candidate => ({
+  value,
+  rawText: value,
+  confidence: 0.99,
+  source: 'ocr',
+});
+
 it('offers a guided demo and a label-review entry point', () => {
   render(<App />);
 
@@ -137,6 +146,45 @@ it('labels extraction-only batch rows as requiring application data', () => {
 
   expect(screen.getByText('Application data required')).toBeInTheDocument();
   expect(screen.queryByText(/^Match$/)).not.toBeInTheDocument();
+});
+
+it('renders extracted evidence for a filename-only triage row after its detail control opens', async () => {
+  const user = userEvent.setup();
+  const extractionOnly: QueueItem[] = [
+    {
+      id: 'triage-evidence',
+      file: new File(['label'], 'triage-evidence.png', { type: 'image/png' }),
+      name: 'triage-evidence.png',
+      size: 5,
+      status: 'extracted_pending_application',
+      progress: 1,
+      thumbnailUrl: 'blob:triage-evidence-preview',
+      rawText: 'OLD TOM\n45% Alc./Vol.',
+      extraction: {
+        brandName: ocrCandidate('OLD TOM'),
+        abv: ocrCandidate('45%'),
+      },
+    },
+  ];
+
+  render(<App initialBatchItems={extractionOnly} />);
+
+  const trigger = screen.getByRole('button', {
+    name: /view evidence for triage-evidence\.png/i,
+  });
+  expect(trigger).toHaveAttribute('aria-expanded', 'false');
+
+  await user.click(trigger);
+
+  const detail = screen.getByRole('region', {
+    name: /evidence for triage-evidence\.png/i,
+  });
+  expect(trigger).toHaveAttribute('aria-expanded', 'true');
+  expect(detail).toHaveTextContent('Application data required');
+  expect(detail).toHaveTextContent('OLD TOM');
+  expect(detail).toHaveTextContent('Raw OCR');
+  expect(detail).toHaveTextContent('45% Alc./Vol.');
+  expect(screen.getByRole('img', { name: /label preview: triage-evidence\.png/i })).toBeInTheDocument();
 });
 
 it('requires the complete CSV application schema before a batch can begin', async () => {
@@ -344,6 +392,60 @@ it('preserves raw OCR evidence when an agent corrects an extracted candidate', a
 
   expect(screen.getByText('Agent-entered')).toBeInTheDocument();
   expect(screen.getByText(/raw OCR: OLD TOM DISTILLERY/i)).toBeInTheDocument();
+});
+
+it('lets an agent add a missing imported-origin candidate without fabricating raw OCR evidence', async () => {
+  const user = userEvent.setup();
+  vi.mocked(extractFromImage).mockResolvedValueOnce({
+    extraction: {
+      brandName: ocrCandidate('Old Tom'),
+      classType: ocrCandidate('Bourbon Whiskey'),
+      abv: ocrCandidate('45%'),
+      proof: ocrCandidate('90 Proof'),
+      netContents: ocrCandidate('750 mL'),
+      producerAddress: ocrCandidate('Old Tom, KY'),
+      warningText: ocrCandidate(CANONICAL_WARNING_BODY),
+      warningHeading: ocrCandidate(CANONICAL_WARNING_HEADING),
+    },
+    rawText: 'Old Tom\nMade in an unreadable location',
+    source: 'ocr',
+  });
+
+  render(<App />);
+  await user.click(screen.getByRole('button', { name: /review a label/i }));
+  await user.type(screen.getByRole('textbox', { name: /^brand name$/i }), 'Old Tom');
+  await user.type(screen.getByRole('textbox', { name: /class\/type/i }), 'Bourbon Whiskey');
+  await user.type(screen.getByRole('textbox', { name: /alcohol by volume/i }), '45%');
+  await user.type(screen.getByRole('textbox', { name: /net contents/i }), '750 mL');
+  await user.type(screen.getByRole('textbox', { name: /producer address/i }), 'Old Tom, KY');
+  await user.click(screen.getByRole('checkbox', { name: /imported product/i }));
+  await user.type(screen.getByRole('textbox', { name: /country of origin/i }), 'Scotland');
+  await user.upload(
+    screen.getByLabelText(/^choose label image$/i),
+    new File(['label'], 'imported.png', { type: 'image/png' }),
+  );
+  await user.click(screen.getByRole('button', { name: /start evidence review/i }));
+
+  const originRow = await screen.findByRole('row', { name: /country of origin/i });
+  expect(originRow).toHaveTextContent('Unreadable');
+
+  const addOrigin = screen.getByRole('button', {
+    name: /add country of origin candidate/i,
+  });
+  expect(addOrigin).toHaveAttribute('aria-expanded', 'false');
+  await user.click(addOrigin);
+
+  const originInput = screen.getByRole('textbox', {
+    name: /country of origin agent-entered candidate/i,
+  });
+  expect(addOrigin).toHaveAttribute('aria-expanded', 'true');
+  expect(originInput).toHaveFocus();
+  await user.type(originInput, 'Scotland');
+  await user.click(screen.getByRole('button', { name: /save country of origin candidate/i }));
+
+  expect(originRow).toHaveTextContent('Match');
+  expect(originRow).toHaveTextContent('Agent-entered');
+  expect(originRow).toHaveTextContent('No raw OCR candidate was extracted.');
 });
 
 it('never renders an approval claim', async () => {

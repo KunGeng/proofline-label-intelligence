@@ -42,6 +42,22 @@ const withCandidate = (
   reason,
 });
 
+const derivedField = (
+  field: FieldKey,
+  state: ReviewState,
+  expected: string,
+  observed: string,
+  reason: string,
+  confidence?: number,
+): FieldResult => ({
+  field,
+  state,
+  expected,
+  observed,
+  confidence,
+  reason,
+});
+
 export const candidateState = (candidate?: Candidate): ReviewState => {
   if (
     !candidate ||
@@ -166,6 +182,109 @@ const numericField = (
     state === 'match'
       ? 'High-confidence numeric value conflicts with the application.'
       : 'Numeric conflict requires review because confidence is not high.',
+  );
+};
+
+const hasCandidateValue = (candidate?: Candidate): boolean =>
+  Boolean(candidate?.value.trim());
+
+const formatProof = (proof: number): string =>
+  `${Number.isInteger(proof) ? proof : Number(proof.toFixed(2))} Proof`;
+
+const abvProofConsistencyField = (
+  application: ValidationInput['application'],
+  extraction: ValidationInput['extraction'],
+): FieldResult => {
+  const abv = extraction.abv;
+  const proof = extraction.proof;
+  const hasAbv = hasCandidateValue(abv);
+  const hasProof = hasCandidateValue(proof);
+
+  if (!hasProof && !application.proof?.trim()) {
+    return derivedField(
+      'abvProofConsistency',
+      'match',
+      'Not assessed',
+      'No proof extracted',
+      'Proof is optional for this application, so ABV/proof consistency is not assessed.',
+    );
+  }
+
+  const abvValue = parseAbv(candidateValue(abv));
+  const proofValue = parseProof(candidateValue(proof));
+  const expected = abvValue === undefined
+    ? 'Proof = 2 × ABV'
+    : formatProof(abvValue * 2);
+  const observed = hasProof ? candidateValue(proof) : 'No readable proof';
+  const confidence = hasAbv && hasProof
+    ? Math.min(abv?.confidence ?? 0, proof?.confidence ?? 0)
+    : undefined;
+  const abvState = candidateState(abv);
+  const proofState = candidateState(proof);
+
+  if (!hasAbv || !hasProof || abvState === 'unreadable' || proofState === 'unreadable') {
+    return derivedField(
+      'abvProofConsistency',
+      'unreadable',
+      expected,
+      observed,
+      'A readable ABV and proof pair is required to assess consistency.',
+      confidence,
+    );
+  }
+
+  if (abvState === 'needs_review' || proofState === 'needs_review') {
+    return derivedField(
+      'abvProofConsistency',
+      'needs_review',
+      expected,
+      observed,
+      'ABV/proof consistency requires review because one or both extracted values are below high confidence.',
+      confidence,
+    );
+  }
+
+  if (abvValue === undefined || proofValue === undefined) {
+    return derivedField(
+      'abvProofConsistency',
+      'needs_review',
+      expected,
+      observed,
+      'ABV/proof consistency requires parseable numeric label values.',
+      confidence,
+    );
+  }
+
+  const divergence = Math.abs(proofValue - abvValue * 2);
+  if (divergence === 0) {
+    return derivedField(
+      'abvProofConsistency',
+      'match',
+      expected,
+      observed,
+      'Extracted proof equals twice the extracted ABV.',
+      confidence,
+    );
+  }
+
+  if (divergence <= 1) {
+    return derivedField(
+      'abvProofConsistency',
+      'needs_review',
+      expected,
+      observed,
+      'Extracted proof differs from twice the extracted ABV by one proof point or less.',
+      confidence,
+    );
+  }
+
+  return derivedField(
+    'abvProofConsistency',
+    'mismatch',
+    expected,
+    observed,
+    'Extracted proof differs from twice the extracted ABV by more than one proof point.',
+    confidence,
   );
 };
 
@@ -318,6 +437,7 @@ export const validateLabel = (input: ValidationInput): VerificationResult => {
           extraction.proof,
           'Proof is not provided in the application.',
         ),
+    abvProofConsistencyField(application, extraction),
     numericField(
       'netContents',
       application.netContents,

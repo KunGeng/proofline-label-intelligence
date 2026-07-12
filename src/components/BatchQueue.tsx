@@ -1,4 +1,5 @@
 import {
+  Fragment,
   useCallback,
   useEffect,
   useMemo,
@@ -6,7 +7,13 @@ import {
   useState,
   type ChangeEvent,
 } from 'react';
-import type { ReviewState } from '../domain/types';
+import { fieldLabel } from '../domain/validation';
+import type {
+  Candidate,
+  FieldKey,
+  LabelExtraction,
+  ReviewState,
+} from '../domain/types';
 import { extractFromImage } from '../features/extraction/ocr';
 import { parseBatchCsv } from '../features/intake/csv';
 import { downloadCsv } from '../features/intake/export';
@@ -18,7 +25,13 @@ import {
   type QueueStatus,
   type ReviewQueue,
 } from '../features/intake/queue';
-import { QueueEmptyIllustration, ScopeNotice, SectionCard, StatusBadge } from './ui';
+import {
+  QueueEmptyIllustration,
+  ScopeNotice,
+  SectionCard,
+  SourceChip,
+  StatusBadge,
+} from './ui';
 
 const MAX_BATCH_FILES = 300;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -125,6 +138,98 @@ const isValidImage = (file: File): string | undefined => {
 };
 
 const errorDescriptionIdFor = (item: QueueItem): string => `batch-row-error-${item.id}`;
+const evidenceIdFor = (item: QueueItem): string => `batch-evidence-${item.id}`;
+
+const candidateEntriesFor = (
+  extraction: LabelExtraction | undefined,
+): Array<[keyof LabelExtraction, Candidate]> =>
+  Object.entries(extraction ?? {}) as Array<[keyof LabelExtraction, Candidate]>;
+
+const confidenceText = (confidence: number): string =>
+  `${Math.round(confidence * 100)}% confidence`;
+
+function BatchEvidence({ item }: { item: QueueItem }) {
+  const candidates = candidateEntriesFor(item.extraction);
+
+  return (
+    <section
+      className="batch-evidence"
+      id={evidenceIdFor(item)}
+      role="region"
+      aria-label={`Evidence for ${item.name}`}
+    >
+      <div className="batch-evidence__heading">
+        <div>
+          <p className="eyebrow">Label evidence</p>
+          <h3>{item.name}</h3>
+        </div>
+        {item.status === 'extracted_pending_application' ? (
+          <span className="batch-status batch-status--triage">Application data required</span>
+        ) : null}
+      </div>
+
+      <div className="batch-evidence__grid">
+        <div>
+          {item.thumbnailUrl ? (
+            <figure className="batch-evidence__preview">
+              <img src={item.thumbnailUrl} alt={`Label preview: ${item.name}`} />
+              <figcaption>Preview retained only for this browser-session review.</figcaption>
+            </figure>
+          ) : (
+            <p className="muted">No label preview is available for this item.</p>
+          )}
+
+          <div className="batch-evidence__raw">
+            <h4>Raw OCR</h4>
+            <pre>{item.rawText || 'No readable text was extracted from this label.'}</pre>
+          </div>
+        </div>
+
+        <div className="batch-evidence__details">
+          <div>
+            <h4>Extracted candidates</h4>
+            {candidates.length > 0 ? (
+              <ul className="batch-evidence__list">
+                {candidates.map(([field, candidate]) => (
+                  <li key={field}>
+                    <strong>{fieldLabel(field as FieldKey)}</strong>
+                    <span className="table-value">{candidate.value}</span>
+                    <div className="candidate-evidence__meta">
+                      <SourceChip source={candidate.source} />
+                      <span>{confidenceText(candidate.confidence)}</span>
+                    </div>
+                    <p className="raw-evidence">
+                      Raw OCR: {candidate.rawText || 'No raw OCR candidate was extracted.'}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="muted">No extracted candidates are available for this item.</p>
+            )}
+          </div>
+
+          {item.result ? (
+            <div>
+              <h4>Validation findings</h4>
+              <ul className="batch-evidence__list batch-evidence__list--findings">
+                {item.result.fields.map((field) => (
+                  <li key={field.field}>
+                    <div className="batch-evidence__finding-heading">
+                      <strong>{fieldLabel(field.field)}</strong>
+                      <StatusBadge state={field.state} />
+                    </div>
+                    <p className="finding-reason">{field.reason}</p>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </section>
+  );
+}
 
 const statusFor = (item: QueueItem) => {
   if (item.status === 'extracted_pending_application') {
@@ -156,6 +261,7 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
   const [items, setItems] = useState<QueueItem[]>(() => initialItems ? [...initialItems] : []);
   const [filter, setFilter] = useState<QueueFilter>('all');
   const [filenameQuery, setFilenameQuery] = useState('');
+  const [expandedEvidenceId, setExpandedEvidenceId] = useState<string>();
   const [isProcessing, setIsProcessing] = useState(false);
   const selectedFilesRef = useRef<File[]>([]);
   const activeGenerationRef = useRef<QueueGeneration | undefined>(undefined);
@@ -228,6 +334,7 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
   useEffect(() => {
     mountedRef.current = true;
     setItems(initialItems ? [...initialItems] : []);
+    setExpandedEvidenceId(undefined);
 
     return () => {
       mountedRef.current = false;
@@ -337,6 +444,7 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
     setItems([...queue.items]);
     setFilter('all');
     setFilenameQuery('');
+    setExpandedEvidenceId(undefined);
 
     void trackQueueWork(generation, () => queue.start());
   };
@@ -365,6 +473,7 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
     setCsvErrors([]);
     setFilter('all');
     setFilenameQuery('');
+    setExpandedEvidenceId(undefined);
   };
 
   const visibleItems = useMemo(() => {
@@ -568,44 +677,77 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
                 <tbody>
                   {visibleItems.map((item) => {
                     const counts = countsFor(item);
+                    const canViewEvidence = processedStatuses.has(item.status);
+                    const isEvidenceOpen = expandedEvidenceId === item.id;
                     return (
-                      <tr key={item.id}>
-                        <th scope="row">
-                          <span className="batch-file-name">{item.name}</span>
-                          <span className="batch-file-meta">{formatBytes(item.size)}</span>
-                        </th>
-                        <td>
-                          {statusFor(item)}
-                          {item.error ? (
-                            <p className="batch-row-error" id={errorDescriptionIdFor(item)}>
-                              {item.error}
-                            </p>
-                          ) : null}
-                        </td>
-                        <td>{item.result ? counts.match : '—'}</td>
-                        <td>{item.result ? counts.mismatch : '—'}</td>
-                        <td>
-                          {item.result ? (
-                            <span className="batch-review-count">
-                              {counts.needs_review}
-                              {counts.unreadable > 0 ? <small>{counts.unreadable} unreadable</small> : null}
-                            </span>
-                          ) : '—'}
-                        </td>
-                        <td>
-                          {item.status === 'error' && activeGenerationRef.current ? (
-                            <button
-                              type="button"
-                              className="text-button"
-                              onClick={() => retry(item.id)}
-                              disabled={isProcessing}
-                              aria-label={`Retry ${item.name}`}
-                            >
-                              Retry
-                            </button>
-                          ) : <span className="muted">—</span>}
-                        </td>
-                      </tr>
+                      <Fragment key={item.id}>
+                        <tr>
+                          <th scope="row">
+                            <span className="batch-file-name">{item.name}</span>
+                            <span className="batch-file-meta">{formatBytes(item.size)}</span>
+                          </th>
+                          <td>
+                            {statusFor(item)}
+                            {item.error ? (
+                              <p className="batch-row-error" id={errorDescriptionIdFor(item)}>
+                                {item.error}
+                              </p>
+                            ) : null}
+                          </td>
+                          <td>{item.result ? counts.match : '—'}</td>
+                          <td>{item.result ? counts.mismatch : '—'}</td>
+                          <td>
+                            {item.result ? (
+                              <span className="batch-review-count">
+                                {counts.needs_review}
+                                {counts.unreadable > 0 ? <small>{counts.unreadable} unreadable</small> : null}
+                              </span>
+                            ) : '—'}
+                          </td>
+                          <td>
+                            <div className="batch-row-actions">
+                              {canViewEvidence ? (
+                                <button
+                                  type="button"
+                                  className="text-button"
+                                  aria-expanded={isEvidenceOpen}
+                                  aria-controls={
+                                    isEvidenceOpen ? evidenceIdFor(item) : undefined
+                                  }
+                                  onClick={() => {
+                                    setExpandedEvidenceId((current) =>
+                                      current === item.id ? undefined : item.id,
+                                    );
+                                  }}
+                                >
+                                  {isEvidenceOpen
+                                    ? `Hide evidence for ${item.name}`
+                                    : `View evidence for ${item.name}`}
+                                </button>
+                              ) : null}
+                              {item.status === 'error' && activeGenerationRef.current ? (
+                                <button
+                                  type="button"
+                                  className="text-button"
+                                  onClick={() => retry(item.id)}
+                                  disabled={isProcessing}
+                                  aria-label={`Retry ${item.name}`}
+                                >
+                                  Retry
+                                </button>
+                              ) : null}
+                              {!canViewEvidence && !(item.status === 'error' && activeGenerationRef.current) ? (
+                                <span className="muted">—</span>
+                              ) : null}
+                            </div>
+                          </td>
+                        </tr>
+                        {isEvidenceOpen ? (
+                          <tr className="batch-evidence-row">
+                            <td colSpan={6}><BatchEvidence item={item} /></td>
+                          </tr>
+                        ) : null}
+                      </Fragment>
                     );
                   })}
                 </tbody>

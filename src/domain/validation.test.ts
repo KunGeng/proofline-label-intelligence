@@ -15,6 +15,7 @@ import {
   parseProof,
   stringSimilarity,
 } from './normalize';
+import { extractFromText } from '../features/extraction/parser';
 import type {
   Candidate,
   FieldKey,
@@ -64,6 +65,7 @@ const byField = (result: VerificationResult, field: FieldKey) =>
 describe('normalization helpers', () => {
   it('normalizes only the supported textual variations', () => {
     expect(fieldLabel('warningHeading')).toBe('Warning heading');
+    expect(fieldLabel('abvProofConsistency')).toBe('ABV/proof consistency');
     expect(canonicalizeText(" Stone’s-Throw, LLC. ")).toBe('stones throw llc');
     expect(canonicalizeText('ＦＯＯ')).not.toBe(canonicalizeText('foo'));
     expect(stringSimilarity("Stone's Throw", "Stone's Thro")).toBeGreaterThanOrEqual(
@@ -155,6 +157,57 @@ describe('validateLabel', () => {
 
     expect(byField(result, 'abv')).toMatchObject({ state: 'mismatch' });
     expect(byField(result, 'proof')).toMatchObject({ state: 'mismatch' });
+  });
+
+  it('flags a readable proof that is more than one point away from twice the extracted ABV', () => {
+    const result = validateLabel(
+      fixture(
+        { proof: candidate('80 Proof') },
+        { warningTypographyConfirmed: true },
+        { proof: '80' },
+      ),
+    );
+
+    expect(byField(result, 'abvProofConsistency')).toMatchObject({
+      state: 'mismatch',
+      expected: '90 Proof',
+      observed: '80 Proof',
+    });
+    expect(result.overallState).toBe('mismatch');
+  });
+
+  it('keeps small or lower-confidence ABV/proof variance in review', () => {
+    const smallVariance = validateLabel(
+      fixture(
+        { proof: candidate('89.5 Proof') },
+        { warningTypographyConfirmed: true },
+        { proof: '89.5' },
+      ),
+    );
+    const lowerConfidence = validateLabel(
+      fixture(
+        { proof: candidate('80 Proof', 0.72) },
+        { warningTypographyConfirmed: true },
+        { proof: '80' },
+      ),
+    );
+    const fractionalVariance = validateLabel(
+      fixture(
+        { proof: candidate('89.995 Proof') },
+        { warningTypographyConfirmed: true },
+        { proof: '89.995' },
+      ),
+    );
+
+    expect(byField(smallVariance, 'abvProofConsistency')).toMatchObject({
+      state: 'needs_review',
+    });
+    expect(byField(lowerConfidence, 'abvProofConsistency')).toMatchObject({
+      state: 'needs_review',
+    });
+    expect(byField(fractionalVariance, 'abvProofConsistency')).toMatchObject({
+      state: 'needs_review',
+    });
   });
 
   it('does not require proof when the application has no proof value', () => {
@@ -261,6 +314,25 @@ describe('validateLabel', () => {
     expect(byField(altered, 'warningText')).toMatchObject({
       state: 'mismatch',
     });
+  });
+
+  it('keeps a canonical warning as a match when later label copy follows it', () => {
+    const parsed = extractFromText(
+      `GOVERNMENT WARNING: ${CANONICAL_WARNING_BODY}\nDISTILLED IN KENTUCKY`,
+      0.99,
+    );
+    const result = validateLabel(
+      fixture(
+        {
+          warningText: parsed.warningText,
+          warningHeading: parsed.warningHeading,
+        },
+        { warningTypographyConfirmed: true },
+      ),
+    );
+
+    expect(byField(result, 'warningText')).toMatchObject({ state: 'match' });
+    expect(result.overallState).toBe('match');
   });
 
   it('keeps warning typography in review until an agent confirms it', () => {

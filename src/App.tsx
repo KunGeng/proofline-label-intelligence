@@ -162,16 +162,19 @@ export function App({ initialBatchItems }: AppProps) {
 
   const correctCandidate = (field: CandidateField, value: string): void => {
     setReview((current) => {
-      const candidate = current?.extraction[field];
-      if (!current || !candidate) {
+      if (!current) {
         return current;
       }
+
+      const candidate = current.extraction[field];
 
       return {
         ...current,
         extraction: {
           ...current.extraction,
-          [field]: { ...candidate, value, source: 'agent' },
+          [field]: candidate
+            ? { ...candidate, value, source: 'agent' }
+            : { value, rawText: '', confidence: 1, source: 'agent' },
         },
       };
     });

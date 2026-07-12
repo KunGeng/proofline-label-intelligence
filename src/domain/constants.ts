@@ -12,6 +12,7 @@ const fieldLabels: Record<FieldKey, string> = {
   classType: 'Class/type',
   abv: 'Alcohol by volume',
   proof: 'Proof',
+  abvProofConsistency: 'ABV/proof consistency',
   netContents: 'Net contents',
   producerAddress: 'Producer address',
   countryOfOrigin: 'Country of origin',

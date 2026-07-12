@@ -12,7 +12,10 @@ const netContentsPattern =
 const producerPattern = /(?:bottled|distilled|produced)\s+by\s+([^\r\n]+)/i;
 const producerOrImporterPattern =
   /\b(?:bottled|distilled|produced|imported|manufactured)\s+by\b|\bimporter\b/i;
+const countryOfOriginPattern =
+  /\b(?:product\s+of|country\s+of\s+origin\s*:?|made\s+in|imported\s+from)\s+([A-Za-z][A-Za-z .’'\-]*?)(?=\r?\n|$)/i;
 const warningHeadingPattern = /\b(government\s+warning:)/i;
+const warningBodyPattern = /\(\s*1\s*\)[\s\S]*?health\s+problems\s*\./i;
 const displayLinePattern = /^[A-Z][A-Z0-9 &'.,-]*$/;
 
 const candidate = (
@@ -38,6 +41,7 @@ const isMandatoryLine = (line: string): boolean =>
   proofPattern.test(line) ||
   netContentsPattern.test(line) ||
   producerOrImporterPattern.test(line) ||
+  countryOfOriginPattern.test(line) ||
   warningHeadingPattern.test(line);
 
 const findBrandName = (rawText: string): string | undefined => {
@@ -67,6 +71,7 @@ export const extractFromText = (
   const proofMatch = rawText.match(proofPattern);
   const netContentsMatch = rawText.match(netContentsPattern);
   const producerMatch = rawText.match(producerPattern);
+  const countryOfOriginMatch = rawText.match(countryOfOriginPattern);
   const warningHeadingMatch = rawText.match(warningHeadingPattern);
 
   if (brandName) {
@@ -102,10 +107,18 @@ export const extractFromText = (
     );
   }
 
+  if (countryOfOriginMatch) {
+    extraction.countryOfOrigin = candidate(
+      countryOfOriginMatch[1].replace(/[.,;:]+\s*$/, ''),
+      countryOfOriginMatch[0].trim(),
+      confidence,
+    );
+  }
+
   if (warningHeadingMatch && warningHeadingMatch.index !== undefined) {
-    const warningText = rawText
+    const warningRegion = rawText
       .slice(warningHeadingMatch.index + warningHeadingMatch[0].length)
-      .trim();
+      .match(warningBodyPattern)?.[0];
 
     extraction.warningHeading = candidate(
       warningHeadingMatch[1],
@@ -113,8 +126,8 @@ export const extractFromText = (
       confidence,
     );
 
-    if (warningText) {
-      extraction.warningText = candidate(warningText, warningText, confidence);
+    if (warningRegion) {
+      extraction.warningText = candidate(warningRegion, warningRegion, confidence);
     }
   }
 

@@ -18,6 +18,9 @@ import {
 export type CandidateField = keyof LabelExtraction;
 export type ReviewDeskPhase = 'processing' | 'error' | 'ready';
 
+const isCandidateField = (field: FieldKey): field is CandidateField =>
+  field !== 'warningTypography' && field !== 'abvProofConsistency';
+
 interface ReviewDeskProps {
   title: string;
   extraction: LabelExtraction;
@@ -38,9 +41,7 @@ const candidateFor = (
   field: FieldKey,
   extraction: LabelExtraction,
 ): Candidate | undefined =>
-  field === 'warningTypography'
-    ? undefined
-    : extraction[field as CandidateField];
+  isCandidateField(field) ? extraction[field] : undefined;
 
 const summaryFor = (state: ReviewState): string => {
   switch (state) {
@@ -101,10 +102,13 @@ export function ReviewDesk({
     }
   }, [editingField, restoreFocusField]);
 
-  const openCorrection = (field: CandidateField, candidate: Candidate): void => {
+  const openCandidateEntry = (
+    field: CandidateField,
+    candidate?: Candidate,
+  ): void => {
     setRestoreFocusField(undefined);
     setEditingField(field);
-    setCorrection(candidate.value);
+    setCorrection(candidate?.value ?? '');
     setCorrectionError(undefined);
   };
 
@@ -115,14 +119,76 @@ export function ReviewDesk({
     setCorrectionError(undefined);
   };
 
-  const saveCorrection = (field: CandidateField): void => {
+  const saveCorrection = (field: CandidateField, isNewCandidate: boolean): void => {
     if (!correction.trim()) {
-      setCorrectionError('Enter a corrected value before saving.');
+      setCorrectionError(
+        isNewCandidate
+          ? 'Enter a value before saving.'
+          : 'Enter a corrected value before saving.',
+      );
       return;
     }
 
     onCorrectCandidate(field, correction.trim());
     closeCorrection(field);
+  };
+
+  const correctionForm = (
+    field: CandidateField,
+    candidate: Candidate | undefined,
+  ) => {
+    const isNewCandidate = !candidate;
+    const label = fieldLabel(field);
+
+    return (
+      <div
+        className="correction-form"
+        id={correctionIdFor(field)}
+        role="region"
+        aria-label={`${label} ${isNewCandidate ? 'candidate entry' : 'correction'}`}
+      >
+        <label>
+          {isNewCandidate ? `${label} agent-entered candidate` : `${label} corrected candidate`}
+          <input
+            ref={correctionInputRef}
+            value={correction}
+            onChange={(event) => {
+              setCorrection(event.target.value);
+              setCorrectionError(undefined);
+            }}
+            aria-invalid={correctionError ? true : undefined}
+            aria-describedby={
+              correctionError ? correctionErrorIdFor(field) : undefined
+            }
+          />
+        </label>
+        {correctionError ? (
+          <p
+            className="inline-error correction-form__error"
+            id={correctionErrorIdFor(field)}
+            role="alert"
+          >
+            {correctionError}
+          </p>
+        ) : null}
+        <div>
+          <button
+            className="text-button"
+            type="button"
+            onClick={() => saveCorrection(field, isNewCandidate)}
+          >
+            Save {label} {isNewCandidate ? 'candidate' : 'correction'}
+          </button>
+          <button
+            className="text-button"
+            type="button"
+            onClick={() => closeCorrection(field)}
+          >
+            {isNewCandidate ? 'Cancel candidate entry' : 'Cancel correction'}
+          </button>
+        </div>
+      </div>
+    );
   };
 
   const progressPercent = typeof progress === 'number'
@@ -270,12 +336,15 @@ export function ReviewDesk({
               <tbody>
                 {result.fields.map((fieldResult) => {
                   const candidate = candidateFor(fieldResult.field, extraction);
-                  const candidateField = fieldResult.field as CandidateField;
-                  const isEditing = editingField === candidateField;
+                  const candidateField = isCandidateField(fieldResult.field)
+                    ? fieldResult.field
+                    : undefined;
+                  const isEditing = candidateField !== undefined && editingField === candidateField;
+                  const label = fieldLabel(fieldResult.field);
 
                   return (
                     <tr key={fieldResult.field}>
-                      <th scope="row">{fieldLabel(fieldResult.field)}</th>
+                      <th scope="row">{label}</th>
                       <td><span className="table-value">{fieldResult.expected}</span></td>
                       <td>
                         {candidate ? (
@@ -285,7 +354,41 @@ export function ReviewDesk({
                               <SourceChip source={candidate.source} />
                               <span>{confidenceText(candidate.confidence)}</span>
                             </div>
-                            <p className="raw-evidence">Raw OCR: {candidate.rawText}</p>
+                            <p className="raw-evidence">
+                              Raw OCR: {candidate.rawText || 'No raw OCR candidate was extracted.'}
+                            </p>
+                            {candidateField ? (
+                              <>
+                                <button
+                                  ref={(element) => {
+                                    correctionTriggerRefs.current[candidateField] = element;
+                                  }}
+                                  className="text-button"
+                                  type="button"
+                                  aria-expanded={isEditing}
+                                  aria-controls={
+                                    isEditing ? correctionIdFor(candidateField) : undefined
+                                  }
+                                  onClick={() => {
+                                    if (isEditing) {
+                                      closeCorrection(candidateField);
+                                      return;
+                                    }
+
+                                    openCandidateEntry(candidateField, candidate);
+                                  }}
+                                >
+                                  {isEditing
+                                    ? `Close ${label} correction`
+                                    : `Correct ${label} candidate`}
+                                </button>
+                                {isEditing ? correctionForm(candidateField, candidate) : null}
+                              </>
+                            ) : null}
+                          </div>
+                        ) : candidateField ? (
+                          <div className="candidate-evidence">
+                            <span className="muted">No extracted candidate</span>
                             <button
                               ref={(element) => {
                                 correctionTriggerRefs.current[candidateField] = element;
@@ -302,65 +405,15 @@ export function ReviewDesk({
                                   return;
                                 }
 
-                                openCorrection(candidateField, candidate);
+                                openCandidateEntry(candidateField);
                               }}
                             >
-                              {isEditing
-                                ? `Close ${fieldLabel(fieldResult.field)} correction`
-                                : `Correct ${fieldLabel(fieldResult.field)} candidate`}
+                              {isEditing ? `Close ${label} candidate entry` : `Add ${label} candidate`}
                             </button>
-                            {isEditing ? (
-                              <div
-                                className="correction-form"
-                                id={correctionIdFor(candidateField)}
-                                role="region"
-                                aria-label={`${fieldLabel(fieldResult.field)} correction`}
-                              >
-                                <label>
-                                  {fieldLabel(fieldResult.field)} corrected candidate
-                                  <input
-                                    ref={correctionInputRef}
-                                    value={correction}
-                                    onChange={(event) => {
-                                      setCorrection(event.target.value);
-                                      setCorrectionError(undefined);
-                                    }}
-                                    aria-invalid={correctionError ? true : undefined}
-                                    aria-describedby={
-                                      correctionError
-                                        ? correctionErrorIdFor(candidateField)
-                                        : undefined
-                                    }
-                                  />
-                                </label>
-                                {correctionError ? (
-                                  <p
-                                    className="inline-error correction-form__error"
-                                    id={correctionErrorIdFor(candidateField)}
-                                    role="alert"
-                                  >
-                                    {correctionError}
-                                  </p>
-                                ) : null}
-                                <div>
-                                  <button
-                                    className="text-button"
-                                    type="button"
-                                    onClick={() => saveCorrection(candidateField)}
-                                  >
-                                    Save {fieldLabel(fieldResult.field)} correction
-                                  </button>
-                                  <button
-                                    className="text-button"
-                                    type="button"
-                                    onClick={() => closeCorrection(candidateField)}
-                                  >
-                                    Cancel correction
-                                  </button>
-                                </div>
-                              </div>
-                            ) : null}
+                            {isEditing ? correctionForm(candidateField, undefined) : null}
                           </div>
+                        ) : fieldResult.field === 'abvProofConsistency' ? (
+                          <span className="muted">Derived from extracted ABV and proof candidates.</span>
                         ) : (
                           <span className="muted">No extracted candidate</span>
                         )}

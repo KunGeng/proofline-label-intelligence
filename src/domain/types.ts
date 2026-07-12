@@ -3,6 +3,7 @@ export type FieldKey =
   | 'classType'
   | 'abv'
   | 'proof'
+  | 'abvProofConsistency'
   | 'netContents'
   | 'producerAddress'
   | 'countryOfOrigin'
