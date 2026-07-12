@@ -40,7 +40,9 @@ interface BatchQueueProps {
 interface QueueGeneration {
   queue: ReviewQueue;
   activeOperations: number;
-  refreshTimer?: ReturnType<typeof window.setInterval>;
+  // This component runs only in the browser and deliberately calls window.setInterval,
+  // whose DOM handle is a number even when Node test types are available.
+  refreshTimer?: number;
 }
 
 const queueStatusLabels: Record<QueueStatus, string> = {
