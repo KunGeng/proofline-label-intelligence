@@ -2,7 +2,7 @@
 
 > A browser-first evidence-review prototype for U.S. distilled-spirit labels. It turns declared label facts and a label image into a conservative, agent-led review—not an automatic approval.
 
-**Live prototype:** `PENDING_STATIC_DEPLOYMENT_URL` — this is deliberately a placeholder, not a live URL. Replace it only after the verified `dist/` bundle is published.
+**Live prototype:** [proofline-label-intelligence.kungeng0803.chatgpt.site](https://proofline-label-intelligence.kungeng0803.chatgpt.site)
 
 ## What it does
 
@@ -147,7 +147,7 @@ The suite covers deterministic validation and warning behavior, parser extractio
 
 ## Deployment
 
-**Deployment status:** build verified locally; no public URL is claimed in this repository until a static host publishes `dist/`.
+**Deployment status:** published as a private Sites deployment at [proofline-label-intelligence.kungeng0803.chatgpt.site](https://proofline-label-intelligence.kungeng0803.chatgpt.site). The build remains a static browser-local application; the host serves assets but does not receive label images or application facts from the app.
 
 For any static host (including a Sites project), use:
 
@@ -162,7 +162,7 @@ Configure the host with:
 - **Publish directory:** `dist`
 - **Runtime requirement:** serve the `public/ocr/` assets copied into `dist/ocr/` from the same origin as the application; do not replace them with a third-party OCR CDN.
 
-After publication, smoke-test a real label upload and the batch template from the deployed origin. Confirm that the network panel contains only static-app/OCR asset loads and no image or application-data upload. Then replace `PENDING_STATIC_DEPLOYMENT_URL` at the top of this README with the verified HTTPS URL.
+After publication, smoke-test a real label upload and the batch template from the deployed origin. Confirm that the network panel contains only static-app/OCR asset loads and no image or application-data upload.
 
 ## Future Azure path
 
