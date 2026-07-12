@@ -147,7 +147,7 @@ The suite covers deterministic validation and warning behavior, parser extractio
 
 ## Deployment
 
-**Deployment status:** published as a private Sites deployment at [proofline-label-intelligence.kungeng0803.chatgpt.site](https://proofline-label-intelligence.kungeng0803.chatgpt.site). The build remains a static browser-local application; the host serves assets but does not receive label images or application facts from the app.
+**Deployment status:** published as a public Sites deployment at [proofline-label-intelligence.kungeng0803.chatgpt.site](https://proofline-label-intelligence.kungeng0803.chatgpt.site). The build remains a static browser-local application; the host serves assets but does not receive label images or application facts from the app.
 
 For any static host (including a Sites project), use:
 
