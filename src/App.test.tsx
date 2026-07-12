@@ -348,12 +348,26 @@ it('rejects an empty optional CSV instead of silently running image-only triage'
   expect(screen.getByRole('button', { name: /begin batch review/i })).toBeDisabled();
 });
 
-it('opens the fixture-backed demo and requires warning typography confirmation', async () => {
+it('orients the fixture-backed demo around the next three review actions', async () => {
   const user = userEvent.setup();
   render(<App />);
 
   await user.click(screen.getByRole('button', { name: /open guided demo/i }));
 
+  expect(
+    screen.getByRole('heading', { name: /a quick way through this sample/i }),
+  ).toBeInTheDocument();
+  expect(screen.getByRole('link', { name: /inspect the raw ocr/i })).toHaveAttribute(
+    'href',
+    '#raw-evidence',
+  );
+  expect(screen.getByRole('link', { name: /inspect the field comparison/i })).toHaveAttribute(
+    'href',
+    '#field-comparison',
+  );
+  expect(
+    screen.getByRole('link', { name: /complete the visual typography check/i }),
+  ).toHaveAttribute('href', '#typography-confirmation');
   expect(
     screen.getByText(/precomputed sample — not a live OCR timing result/i),
   ).toBeInTheDocument();
@@ -372,6 +386,27 @@ it('opens the fixture-backed demo and requires warning typography confirmation',
   expect(
     screen.getByText('No discrepancies detected — agent approval required.'),
   ).toBeInTheDocument();
+  expect(
+    screen.getByRole('heading', { name: /no discrepancies detected/i }),
+  ).toBeInTheDocument();
+});
+
+it('labels a manual review with next reviewer actions', async () => {
+  const user = userEvent.setup();
+  vi.mocked(extractFromImage).mockResolvedValueOnce({
+    extraction: {},
+    rawText: '',
+    source: 'ocr',
+  });
+
+  await startManualReview(user);
+
+  expect(
+    await screen.findByRole('heading', { name: /next reviewer actions/i }),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole('heading', { name: /a quick way through this sample/i }),
+  ).not.toBeInTheDocument();
 });
 
 it('preserves raw OCR evidence when an agent corrects an extracted candidate', async () => {

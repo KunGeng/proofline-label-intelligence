@@ -16,6 +16,7 @@ interface ActiveReview {
   application: ApplicationData;
   extraction: LabelExtraction;
   rawText: string;
+  isGuidedDemo?: boolean;
   imageUrl?: string;
   objectUrl?: string;
   disclosure?: string;
@@ -91,6 +92,7 @@ export function App({ initialBatchItems }: AppProps) {
       application: oldTomDemo.application,
       extraction: asFixtureEvidence(oldTomDemo.extraction),
       rawText: OLD_TOM_RAW_TEXT,
+      isGuidedDemo: true,
       imageUrl: oldTomDemo.imageUrl,
       disclosure: oldTomDemo.disclosure,
     });
@@ -220,6 +222,7 @@ export function App({ initialBatchItems }: AppProps) {
           disclosure={review.disclosure}
           error={review.error}
           progress={review.progress}
+          isGuidedDemo={Boolean(review.isGuidedDemo)}
           warningTypographyConfirmed={warningTypographyConfirmed}
           onWarningTypographyConfirmed={setWarningTypographyConfirmed}
           onCorrectCandidate={correctCandidate}
