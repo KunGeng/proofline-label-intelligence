@@ -66,6 +66,18 @@ const batchFixture: QueueItem[] = [
   },
 ];
 
+const batchErrorFixture: QueueItem[] = [
+  {
+    id: 'error',
+    file: new File(['label'], 'error.png', { type: 'image/png' }),
+    name: 'error.png',
+    size: 5,
+    status: 'error',
+    progress: 1,
+    error: 'Temporary OCR failure',
+  },
+];
+
 it('offers a guided demo and a label-review entry point', () => {
   render(<App />);
 
@@ -89,6 +101,24 @@ it('filters a completed batch and exports the visible review data', async () => 
   expect(screen.getAllByRole('row')).toHaveLength(2);
   await user.click(screen.getByRole('button', { name: /export results/i }));
   expect(serializeResults(batchFixture)).toContain('filename,status');
+});
+
+it('keeps batch row failures descriptive without injecting row alerts', () => {
+  render(<App initialBatchItems={batchErrorFixture} />);
+
+  expect(screen.queryAllByRole('alert')).toHaveLength(0);
+  expect(
+    screen.getByRole('status', { name: /batch review progress/i }),
+  ).toHaveTextContent('1 extraction error needs attention.');
+});
+
+it('keeps the batch results scrollport keyboard reachable at narrow widths', () => {
+  render(<App initialBatchItems={batchFixture} />);
+
+  const scrollport = screen.getByRole('region', {
+    name: /batch review results table/i,
+  });
+  expect(scrollport).toHaveAttribute('tabindex', '0');
 });
 
 it('labels extraction-only batch rows as requiring application data', () => {
@@ -499,7 +529,7 @@ it('announces OCR progress while the evidence workspace is loading', async () =>
 
   const progress = screen.getByRole('status', { name: /label extraction progress/i });
   expect(progress).toHaveAttribute('aria-live', 'polite');
-  expect(progress).toHaveAttribute('aria-busy', 'true');
+  expect(progress).not.toHaveAttribute('aria-busy');
   expect(progress).toHaveTextContent(/reading label evidence… 42%/i);
   expect(screen.getByText(/preparing comparison workspace/i)).toBeInTheDocument();
 

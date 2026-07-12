@@ -151,7 +151,6 @@ export function ReviewDesk({
           aria-label="Label extraction progress"
           aria-live="polite"
           aria-atomic="true"
-          aria-busy="true"
         >
           <p className="eyebrow">Reading local evidence</p>
           <h2>Extracting label evidence</h2>
@@ -253,7 +252,12 @@ export function ReviewDesk({
             </p>
             <p className="muted">Status precedence: mismatch → unreadable → needs review → match.</p>
           </div>
-          <div className="comparison-table-wrap">
+          <div
+            className="comparison-table-wrap"
+            role="region"
+            aria-label="Field comparison table. Scroll horizontally to review all columns."
+            tabIndex={0}
+          >
             <table>
               <thead>
                 <tr>

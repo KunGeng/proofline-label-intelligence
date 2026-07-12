@@ -122,6 +122,8 @@ const isValidImage = (file: File): string | undefined => {
   return undefined;
 };
 
+const errorDescriptionIdFor = (item: QueueItem): string => `batch-row-error-${item.id}`;
+
 const statusFor = (item: QueueItem) => {
   if (item.status === 'extracted_pending_application') {
     return <span className="batch-status batch-status--triage">Application data required</span>;
@@ -134,6 +136,7 @@ const statusFor = (item: QueueItem) => {
   return (
     <span
       className={`batch-status${item.status === 'error' ? ' batch-status--error' : ''}`}
+      aria-describedby={item.error ? errorDescriptionIdFor(item) : undefined}
     >
       {queueStatusLabels[item.status]}
     </span>
@@ -384,8 +387,14 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
   }, [filenameQuery, filter, items]);
 
   const processedCount = items.filter((item) => processedStatuses.has(item.status)).length;
+  const errorCount = items.filter((item) => item.status === 'error').length;
   const hasQueue = items.length > 0;
   const hasBatchData = hasQueue || selectedFiles.length > 0 || csvPresent;
+  const batchProgressSummary = errorCount > 0
+    ? `${errorCount} extraction error${errorCount === 1 ? '' : 's'} need${errorCount === 1 ? 's' : ''} attention.`
+    : isProcessing
+      ? 'Two local workers are processing label evidence.'
+      : 'Two local workers maximum';
 
   return (
     <section className="batch-workspace" aria-labelledby="batch-heading">
@@ -497,10 +506,9 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
             aria-label="Batch review progress"
             aria-live="polite"
             aria-atomic="true"
-            aria-busy={isProcessing ? 'true' : undefined}
           >
             <strong>{processedCount} of {items.length} processed</strong>
-            <span>Two local workers maximum</span>
+            <span>{batchProgressSummary}</span>
           </div>
           <div className="batch-filters">
             <label>
@@ -538,7 +546,12 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
 
         {hasQueue ? (
           visibleItems.length > 0 ? (
-            <div className="batch-table-wrap">
+            <div
+              className="batch-table-wrap"
+              role="region"
+              aria-label="Batch review results table. Scroll horizontally to review all columns."
+              tabIndex={0}
+            >
               <table className="batch-table">
                 <thead>
                   <tr>
@@ -562,7 +575,9 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
                         <td>
                           {statusFor(item)}
                           {item.error ? (
-                            <p className="batch-row-error" role="alert">{item.error}</p>
+                            <p className="batch-row-error" id={errorDescriptionIdFor(item)}>
+                              {item.error}
+                            </p>
                           ) : null}
                         </td>
                         <td>{item.result ? counts.match : '—'}</td>
