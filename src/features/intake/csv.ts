@@ -1,4 +1,5 @@
 import type { ApplicationData } from '../../domain/types';
+import { parseAbv, parseMilliliters, parseProof } from '../../domain/normalize';
 import type { QueueJob } from './queue';
 
 const CSV_HEADERS = [
@@ -51,7 +52,7 @@ const trimCell = (value: string | undefined): string => value?.trim() ?? '';
 
 export const normalizeFilename = (value: string): string => {
   const trimmed = value.trim();
-  const basename = trimmed.split(/[\\/]/).pop() ?? '';
+  const basename = (trimmed.split(/[\\/]/).pop() ?? '').trim();
 
   return basename.toLowerCase();
 };
@@ -183,6 +184,18 @@ const applicationForRow = (
     );
   }
 
+  if (values.abv && parseAbv(values.abv) === undefined) {
+    errors.push(`Row ${line}: abv is not in the required format.`);
+  }
+
+  if (values.proof && parseProof(values.proof) === undefined) {
+    errors.push(`Row ${line}: proof is not in the required format.`);
+  }
+
+  if (values.netContents && parseMilliliters(values.netContents) === undefined) {
+    errors.push(`Row ${line}: netContents is not in the required format.`);
+  }
+
   if (errors.length > errorCountBeforeValidation) {
     return undefined;
   }
@@ -268,6 +281,21 @@ export const parseBatchCsv = (csvText: string, files: File[]): CsvImportResult =
     errors.push('The filename CSV header is required.');
   }
 
+  const includesApplicationHeaders = headers.some(
+    (header) => header !== 'filename',
+  );
+  const missingRequiredApplicationHeaders = REQUIRED_APPLICATION_HEADERS.filter(
+    (header) => !headers.includes(header),
+  );
+  if (
+    includesApplicationHeaders &&
+    missingRequiredApplicationHeaders.length > 0
+  ) {
+    errors.push(
+      `CSV has an incomplete application schema; missing required headers: ${missingRequiredApplicationHeaders.join(', ')}.`,
+    );
+  }
+
   if (errors.length > 0) {
     return { matched: [], unmatchedFiles: [...files], errors };
   }
@@ -275,9 +303,7 @@ export const parseBatchCsv = (csvText: string, files: File[]): CsvImportResult =
   const matchedByName = new Map<string, QueueJob>();
   const matchedFiles = new Set<File>();
   const csvNames = new Set<string>();
-  const includesCompleteApplicationSchema = REQUIRED_APPLICATION_HEADERS.every(
-    (header) => headers.includes(header),
-  );
+  const includesCompleteApplicationSchema = includesApplicationHeaders;
 
   for (const row of rows) {
     if (row.cells.length > headers.length) {

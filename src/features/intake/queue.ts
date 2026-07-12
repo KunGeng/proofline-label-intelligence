@@ -8,8 +8,15 @@ import type { ExtractFromImage, ExtractionJobResult } from '../extraction/types'
 
 const MAX_SELECTED_FILES = 300;
 const MAX_CONCURRENT_WORKERS = 2;
+
+interface WorkerSlotRequest {
+  promise: Promise<boolean>;
+  grant(): boolean;
+  cancel(): void;
+}
+
 let activeWorkerSlots = 0;
-const waitingForWorkerSlot: Array<() => void> = [];
+const waitingForWorkerSlot: WorkerSlotRequest[] = [];
 
 export type QueueStatus =
   | 'queued'
@@ -50,6 +57,7 @@ export interface ReviewQueue {
   items: QueueItem[];
   start(): Promise<void>;
   retry(id: string): Promise<void>;
+  clear(): void;
 }
 
 interface PendingQueueItem {
@@ -69,22 +77,55 @@ const workerCountFor = (concurrency: number): number => {
   );
 };
 
-const acquireWorkerSlot = (): Promise<void> =>
-  new Promise((resolve) => {
-    if (activeWorkerSlots < MAX_CONCURRENT_WORKERS) {
-      activeWorkerSlots += 1;
-      resolve();
-      return;
+const acquireWorkerSlot = (): WorkerSlotRequest => {
+  let settled = false;
+  let resolveRequest!: (acquired: boolean) => void;
+  const promise = new Promise<boolean>((resolve) => {
+    resolveRequest = resolve;
+  });
+  let request!: WorkerSlotRequest;
+
+  const settle = (acquired: boolean): boolean => {
+    if (settled) {
+      return false;
     }
 
-    waitingForWorkerSlot.push(resolve);
-  });
+    settled = true;
+    resolveRequest(acquired);
+    return true;
+  };
+
+  request = {
+    promise,
+    grant: () => settle(true),
+    cancel: () => {
+      if (!settle(false)) {
+        return;
+      }
+
+      const waitingIndex = waitingForWorkerSlot.indexOf(request);
+      if (waitingIndex >= 0) {
+        waitingForWorkerSlot.splice(waitingIndex, 1);
+      }
+    },
+  };
+
+  if (activeWorkerSlots < MAX_CONCURRENT_WORKERS) {
+    activeWorkerSlots += 1;
+    request.grant();
+  } else {
+    waitingForWorkerSlot.push(request);
+  }
+
+  return request;
+};
 
 const releaseWorkerSlot = (): void => {
-  const next = waitingForWorkerSlot.shift();
-  if (next) {
-    next();
-    return;
+  while (waitingForWorkerSlot.length > 0) {
+    const next = waitingForWorkerSlot.shift()!;
+    if (next.grant()) {
+      return;
+    }
   }
 
   activeWorkerSlots -= 1;
@@ -127,6 +168,17 @@ const resetForRetry = (item: QueueItem): void => {
   item.error = undefined;
 };
 
+const discardItem = (item: QueueItem): void => {
+  releaseObjectUrl(item.thumbnailUrl);
+  item.result = undefined;
+  item.extraction = undefined;
+  item.rawText = undefined;
+  item.source = undefined;
+  item.thumbnailUrl = undefined;
+  item.error = undefined;
+  item.progress = 0;
+};
+
 export const queueWorkerFromExtractor = (
   extract: ExtractFromImage,
 ): QueueWorker => async (job, report) =>
@@ -156,18 +208,27 @@ export const createReviewQueue = (
   const pending: PendingQueueItem[] = [];
   const scheduled = new Map<QueueItem, Promise<void>>();
   const activeTokens = new Map<QueueItem, number>();
+  const slotRequests = new Map<QueueItem, WorkerSlotRequest>();
   let activeWorkers = 0;
   let nextToken = 0;
+  let cleared = false;
 
   const run = async (item: QueueItem, token: number): Promise<void> => {
-    const job = sourceJobs.get(item);
-    if (!job) {
-      item.status = 'error';
-      item.error = 'The queued job is unavailable.';
+    const isCurrent = (): boolean =>
+      !cleared && activeTokens.get(item) === token;
+    if (!isCurrent()) {
       return;
     }
 
-    const isCurrent = (): boolean => activeTokens.get(item) === token;
+    const job = sourceJobs.get(item);
+    if (!job) {
+      if (isCurrent()) {
+        item.status = 'error';
+        item.error = 'The queued job is unavailable.';
+      }
+      return;
+    }
+
     const report = (progress: number, status: QueueStatus): void => {
       if (!isCurrent() || !isWorkerStatus(status)) {
         return;
@@ -180,16 +241,20 @@ export const createReviewQueue = (
     item.status = 'preparing';
     item.progress = 0;
     let workerSlotAcquired = false;
+    let slotRequest: WorkerSlotRequest | undefined;
 
     try {
-      await acquireWorkerSlot();
-      workerSlotAcquired = true;
-      if (!isCurrent()) {
+      slotRequest = acquireWorkerSlot();
+      slotRequests.set(item, slotRequest);
+      workerSlotAcquired = await slotRequest.promise;
+      slotRequests.delete(item);
+      if (!workerSlotAcquired || !isCurrent()) {
         return;
       }
 
       const output = await worker(job, report);
       if (!isCurrent()) {
+        releaseObjectUrl(output.thumbnailUrl);
         return;
       }
 
@@ -226,6 +291,7 @@ export const createReviewQueue = (
       item.status = 'error';
       item.error = errorMessage(error);
     } finally {
+      slotRequests.delete(item);
       if (workerSlotAcquired) {
         releaseWorkerSlot();
       }
@@ -233,6 +299,10 @@ export const createReviewQueue = (
   };
 
   const drain = (): void => {
+    if (cleared) {
+      return;
+    }
+
     while (activeWorkers < workerCount && pending.length > 0) {
       const next = pending.shift()!;
       activeWorkers += 1;
@@ -249,6 +319,10 @@ export const createReviewQueue = (
   };
 
   const schedule = (item: QueueItem): Promise<void> => {
+    if (cleared) {
+      return Promise.resolve();
+    }
+
     const alreadyScheduled = scheduled.get(item);
     if (alreadyScheduled) {
       return alreadyScheduled;
@@ -264,6 +338,10 @@ export const createReviewQueue = (
   };
 
   const start = async (): Promise<void> => {
+    if (cleared) {
+      return;
+    }
+
     await Promise.all(
       items
         .filter((item) => item.status === 'queued' || scheduled.has(item))
@@ -272,6 +350,10 @@ export const createReviewQueue = (
   };
 
   const retry = async (id: string): Promise<void> => {
+    if (cleared) {
+      return;
+    }
+
     const item = items.find((candidate) => candidate.id === id);
     if (!item) {
       return;
@@ -287,5 +369,30 @@ export const createReviewQueue = (
     await schedule(item);
   };
 
-  return { items, start, retry };
+  const clear = (): void => {
+    if (cleared) {
+      return;
+    }
+
+    cleared = true;
+    for (const request of slotRequests.values()) {
+      request.cancel();
+    }
+    slotRequests.clear();
+    activeTokens.clear();
+
+    for (const queued of pending.splice(0)) {
+      scheduled.delete(queued.item);
+      queued.resolve();
+    }
+    scheduled.clear();
+    sourceJobs.clear();
+
+    for (const item of items) {
+      discardItem(item);
+    }
+    items.splice(0, items.length);
+  };
+
+  return { items, start, retry, clear };
 };

@@ -374,4 +374,156 @@ describe('createReviewQueue', () => {
       });
     }
   });
+
+  it('revokes retained blob thumbnails and removes items when cleared', async () => {
+    const originalRevoke = URL.revokeObjectURL;
+    const revoke = vi.fn();
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: revoke,
+    });
+    const queue = createReviewQueue(
+      [{ id: 'clear-thumbnail', file: file('clear-thumbnail.png') }],
+      async () => ({ ...successfulResult(), thumbnailUrl: 'blob:retained-thumbnail' }),
+      2,
+    );
+
+    try {
+      await queue.start();
+      queue.clear();
+
+      expect(revoke).toHaveBeenCalledWith('blob:retained-thumbnail');
+      expect(queue.items).toEqual([]);
+    } finally {
+      Object.defineProperty(URL, 'revokeObjectURL', {
+        configurable: true,
+        value: originalRevoke,
+      });
+    }
+  });
+
+  it('cancels locally queued work when cleared', async () => {
+    const releaseFirstWorker = deferred<void>();
+    let firstWorkerStarted!: () => void;
+    const firstWorkerStartedPromise = new Promise<void>((resolve) => {
+      firstWorkerStarted = resolve;
+    });
+    const calls: string[] = [];
+    const queue = createReviewQueue(
+      [
+        { id: 'first', file: file('first.png') },
+        { id: 'second', file: file('second.png') },
+      ],
+      async (job) => {
+        calls.push(job.id);
+        if (job.id === 'first') {
+          firstWorkerStarted();
+          await releaseFirstWorker.promise;
+        }
+        return successfulResult();
+      },
+      1,
+    );
+
+    const started = queue.start();
+    await firstWorkerStartedPromise;
+    queue.clear();
+    releaseFirstWorker.resolve();
+    await started;
+
+    expect(calls).toEqual(['first']);
+    expect(queue.items).toEqual([]);
+  });
+
+  it('cancels a job waiting for the shared semaphore when cleared', async () => {
+    const releaseHolders = deferred<void>();
+    const holdersStarted = deferred<void>();
+    let holderCount = 0;
+    const holders = createReviewQueue(
+      [
+        { id: 'holder-1', file: file('holder-1.png') },
+        { id: 'holder-2', file: file('holder-2.png') },
+      ],
+      async () => {
+        holderCount += 1;
+        if (holderCount === 2) {
+          holdersStarted.resolve();
+        }
+        await releaseHolders.promise;
+        return successfulResult();
+      },
+      2,
+    );
+    let waitingWorkerCalls = 0;
+    const waitingQueue = createReviewQueue(
+      [{ id: 'waiting', file: file('waiting.png') }],
+      async () => {
+        waitingWorkerCalls += 1;
+        return successfulResult();
+      },
+      2,
+    );
+
+    const holderStart = holders.start();
+    const waitingStart = waitingQueue.start();
+
+    try {
+      await holdersStarted.promise;
+      await flushMicrotasks();
+      waitingQueue.clear();
+      let waitingStartSettled = false;
+      void waitingStart.then(() => {
+        waitingStartSettled = true;
+      });
+      await flushMicrotasks();
+
+      expect(waitingStartSettled).toBe(true);
+      expect(waitingWorkerCalls).toBe(0);
+      expect(waitingQueue.items).toEqual([]);
+    } finally {
+      releaseHolders.resolve();
+      await Promise.all([holderStart, waitingStart]);
+    }
+
+    expect(waitingWorkerCalls).toBe(0);
+  });
+
+  it('ignores and releases a blob result from an active worker after clear', async () => {
+    const originalRevoke = URL.revokeObjectURL;
+    const revoke = vi.fn();
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: revoke,
+    });
+    const releaseWorker = deferred<void>();
+    const workerStarted = deferred<void>();
+    let report: ((progress: number, status: 'queued' | 'preparing' | 'reading' | 'validating' | 'ready' | 'error' | 'extracted_pending_application') => void) | undefined;
+    const queue = createReviewQueue(
+      [{ id: 'active-clear', file: file('active-clear.png') }],
+      async (_job, workerReport) => {
+        report = workerReport;
+        workerStarted.resolve();
+        await releaseWorker.promise;
+        return { ...successfulResult(), thumbnailUrl: 'blob:late-thumbnail' };
+      },
+      2,
+    );
+
+    try {
+      const started = queue.start();
+      await workerStarted.promise;
+      queue.clear();
+      report?.(0.5, 'reading');
+      releaseWorker.resolve();
+      await started;
+
+      expect(queue.items).toEqual([]);
+      expect(revoke).toHaveBeenCalledWith('blob:late-thumbnail');
+    } finally {
+      Object.defineProperty(URL, 'revokeObjectURL', {
+        configurable: true,
+        value: originalRevoke,
+      });
+    }
+  });
 });

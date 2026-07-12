@@ -12,7 +12,7 @@ const applicationCsv = (row: string): string =>
 describe('parseBatchCsv', () => {
   it('matches filename rows case-insensitively and trims whitespace', () => {
     const result = parseBatchCsv(
-      'filename,brandName\n OLD-TOM.PNG ,OLD TOM',
+      'filename\n OLD-TOM.PNG ',
       [file('old-tom.png')],
     );
 
@@ -27,6 +27,16 @@ describe('parseBatchCsv', () => {
       [file('uploads/old-tom.png')],
     );
 
+    expect(result.matched).toHaveLength(1);
+  });
+
+  it('trims whitespace after extracting a path basename', () => {
+    const result = parseBatchCsv(
+      'filename\nexports/ OLD-TOM.PNG ',
+      [file('old-tom.png')],
+    );
+
+    expect(result.errors).toEqual([]);
     expect(result.matched).toHaveLength(1);
   });
 
@@ -153,6 +163,47 @@ describe('parseBatchCsv', () => {
     );
     expect(invalidBoolean.matched).toHaveLength(0);
     expect(invalidBoolean.unmatchedFiles[0]?.name).toBe('old-tom.png');
+  });
+
+  it.each([
+    {
+      field: 'abv',
+      row: 'old-tom.png,OLD TOM,Bourbon Whiskey,101%,90 Proof,750 mL,Example KY,false,',
+    },
+    {
+      field: 'proof',
+      row: 'old-tom.png,OLD TOM,Bourbon Whiskey,45%,not proof,750 mL,Example KY,false,',
+    },
+    {
+      field: 'netContents',
+      row: 'old-tom.png,OLD TOM,Bourbon Whiskey,45%,90 Proof,750,Example KY,false,',
+    },
+  ])('rejects malformed $field application data before creating a queue job', ({ field, row }) => {
+    const result = parseBatchCsv(applicationCsv(row), [file('old-tom.png')]);
+
+    expect(result.errors).toContainEqual(
+      expect.stringMatching(new RegExp(`${field}.*format`, 'i')),
+    );
+    expect(result.matched).toHaveLength(0);
+  });
+
+  it('rejects incomplete application schemas without downgrading them to triage', () => {
+    const validBoolean = parseBatchCsv(
+      'filename,isImported,countryOfOrigin\nold-tom.png,true,Scotland',
+      [file('old-tom.png')],
+    );
+    const invalidBoolean = parseBatchCsv(
+      'filename,isImported,countryOfOrigin\nold-tom.png,yes,Scotland',
+      [file('old-tom.png')],
+    );
+
+    for (const result of [validBoolean, invalidBoolean]) {
+      expect(result.errors).toContainEqual(
+        expect.stringMatching(/incomplete application.*header/i),
+      );
+      expect(result.matched).toHaveLength(0);
+      expect(result.unmatchedFiles[0]?.name).toBe('old-tom.png');
+    }
   });
 
   it.each([
