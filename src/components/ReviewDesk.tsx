@@ -259,7 +259,9 @@ export function ReviewDesk({
                               className="text-button"
                               type="button"
                               aria-expanded={isEditing}
-                              aria-controls={correctionIdFor(candidateField)}
+                              aria-controls={
+                                isEditing ? correctionIdFor(candidateField) : undefined
+                              }
                               onClick={() => {
                                 if (isEditing) {
                                   closeCorrection(candidateField);

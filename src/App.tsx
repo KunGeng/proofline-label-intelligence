@@ -36,7 +36,7 @@ const asFixtureEvidence = (extraction: LabelExtraction): LabelExtraction => {
 
 const friendlyExtractionError = (error: string): string =>
   error === 'unreadable'
-    ? 'Unable to extract reliable label text. Inspect the image and correct candidates only when supported by evidence.'
+    ? 'We could not read reliable text from this label. Choose another label or provide a clearer image.'
     : error;
 
 const previewUrlFor = (file: File): string | undefined => {

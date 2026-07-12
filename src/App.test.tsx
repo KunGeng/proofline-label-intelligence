@@ -168,6 +168,30 @@ it('keeps the reviewer informed when OCR rejects unexpectedly', async () => {
   ).not.toBeInTheDocument();
 });
 
+it('routes a resolved unreadable OCR result to choose-another-label recovery', async () => {
+  const user = userEvent.setup();
+  vi.mocked(extractFromImage).mockResolvedValueOnce({
+    extraction: {},
+    rawText: '',
+    source: 'ocr',
+    error: 'unreadable',
+  });
+
+  await startManualReview(user);
+
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    'We could not read reliable text from this label. Choose another label or provide a clearer image.',
+  );
+  expect(screen.getByRole('button', { name: /choose another label/i })).toBeInTheDocument();
+  expect(screen.queryByRole('heading', { name: /^unreadable$/i })).not.toBeInTheDocument();
+  expect(screen.queryByRole('table')).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole('checkbox', {
+      name: /i visually confirmed the warning heading is uppercase and bold/i,
+    }),
+  ).not.toBeInTheDocument();
+});
+
 it('shows only progress while OCR is still processing', async () => {
   const user = userEvent.setup();
   const pending = deferred<ExtractionJobResult>();
@@ -198,6 +222,7 @@ it('focuses a disclosed correction editor and restores its trigger after closing
   await user.click(screen.getByRole('button', { name: /open guided demo/i }));
   const trigger = screen.getByRole('button', { name: /correct brand name candidate/i });
   expect(trigger).toHaveAttribute('aria-expanded', 'false');
+  expect(trigger).not.toHaveAttribute('aria-controls');
 
   await user.click(trigger);
 
@@ -211,5 +236,6 @@ it('focuses a disclosed correction editor and restores its trigger after closing
   await user.click(screen.getByRole('button', { name: /cancel correction/i }));
 
   expect(trigger).toHaveAttribute('aria-expanded', 'false');
+  expect(trigger).not.toHaveAttribute('aria-controls');
   expect(trigger).toHaveFocus();
 });
