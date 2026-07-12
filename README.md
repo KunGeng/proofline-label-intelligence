@@ -4,6 +4,8 @@
 
 **Live prototype:** [proofline-label-intelligence.kungeng0803.chatgpt.site](https://proofline-label-intelligence.kungeng0803.chatgpt.site)
 
+**Source repository:** [github.com/KunGeng/proofline-label-intelligence](https://github.com/KunGeng/proofline-label-intelligence)
+
 ## What it does
 
 Proofline gives a reviewer one place to compare an application against a label image:

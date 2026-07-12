@@ -30,6 +30,7 @@ describe('submission documentation', () => {
     expect(readme).toContain('https://www.ecfr.gov/current/title-27/chapter-I/subchapter-A/part-16');
     expect(readme).toContain('https://www.ecfr.gov/current/title-27/chapter-I/subchapter-A/part-16/subpart-C/section-16.21');
     expect(readme).toContain('https://www.ecfr.gov/current/title-27/chapter-I/subchapter-A/part-16/subpart-C/section-16.22');
+    expect(readme).toContain('https://github.com/KunGeng/proofline-label-intelligence');
   });
 
   it('ships a safe, complete CSV intake template', async () => {
