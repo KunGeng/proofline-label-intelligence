@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1400" viewBox="0 0 1000 1400" role="img">
+  <defs>
+    <linearGradient id="paper" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f8efd7"/>
+      <stop offset="1" stop-color="#ead6a7"/>
+    </linearGradient>
+    <linearGradient id="amber" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#d79531"/>
+      <stop offset="1" stop-color="#8f481d"/>
+    </linearGradient>
+    <pattern id="grain" width="18" height="18" patternUnits="userSpaceOnUse">
+      <path d="M0 3h18M0 12h18" stroke="#6c351f" stroke-opacity=".07" stroke-width="1"/>
+    </pattern>
+  </defs>
+  <rect width="1000" height="1400" fill="#3a1b1b"/>
+  <rect x="48" y="48" width="904" height="1304" rx="16" fill="url(#paper)" stroke="#d79b42" stroke-width="10"/>
+  <rect x="72" y="72" width="856" height="1256" rx="8" fill="url(#grain)" stroke="#6b3026" stroke-width="4"/>
+  <path d="M88 370C210 320 278 320 390 370s250 50 522 0v72c-274 50-408 50-522 0S210 392 88 442z" fill="#6b3026" opacity=".93"/>
+  <path d="M88 1000c160-58 294-58 412 0s264 58 412 0v78c-148 58-292 58-412 0s-252-58-412 0z" fill="#6b3026" opacity=".93"/>
+  <g fill="none" stroke="#d79b42" stroke-width="8" opacity=".9">
+    <circle cx="174" cy="234" r="70"/>
+    <circle cx="826" cy="234" r="70"/>
+    <path d="M128 234h92M174 188v92M780 234h92M826 188v92"/>
+  </g>
+  <g transform="translate(500 215)" fill="url(#amber)" stroke="#6b3026" stroke-width="7">
+    <path d="M0-110C65-37 103 7 103 62A103 103 0 1 1-103 62C-103 7-65-37 0-110z"/>
+    <path d="M-50 42c18 43 75 59 114 14" fill="none" stroke="#f7d889" stroke-linecap="round"/>
+  </g>
+  <text x="500" y="465" text-anchor="middle" fill="#3a1b1b" font-family="Georgia, serif" font-size="64" font-weight="700" letter-spacing="4">OLD TOM DISTILLERY</text>
+  <path d="M214 500h572" stroke="#b8782c" stroke-width="3"/>
+  <text x="500" y="565" text-anchor="middle" fill="#6b3026" font-family="Georgia, serif" font-size="36" font-style="italic">Kentucky Straight Bourbon Whiskey</text>
+  <text x="500" y="635" text-anchor="middle" fill="#3a1b1b" font-family="Arial, sans-serif" font-size="31" font-weight="700">45% Alc./Vol. (90 Proof)</text>
+  <text x="500" y="682" text-anchor="middle" fill="#3a1b1b" font-family="Arial, sans-serif" font-size="29" font-weight="700">750 mL</text>
+  <path d="M195 728h610" stroke="#b8782c" stroke-width="3"/>
+  <text x="500" y="782" text-anchor="middle" fill="#3a1b1b" font-family="Georgia, serif" font-size="26">Bottled by Old Tom Distillery, Louisville, KY</text>
+  <rect x="112" y="1110" width="776" height="162" rx="4" fill="#f9f1dc" stroke="#3a1b1b" stroke-width="3"/>
+  <text x="138" y="1142" fill="#17110f" font-family="Arial, sans-serif" font-size="19" font-weight="700">GOVERNMENT WARNING:</text>
+  <text x="138" y="1174" fill="#17110f" font-family="Arial, sans-serif" font-size="17">(1) According to the Surgeon General, women should not drink alcoholic beverages during pregnancy because</text>
+  <text x="138" y="1202" fill="#17110f" font-family="Arial, sans-serif" font-size="17">of the risk of birth defects. (2) Consumption of alcoholic beverages impairs your ability to drive</text>
+  <text x="138" y="1230" fill="#17110f" font-family="Arial, sans-serif" font-size="17">a car or operate machinery, and may cause health problems.</text>
+</svg>

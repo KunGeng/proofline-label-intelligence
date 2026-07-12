@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "sync:ocr-assets": "node scripts/sync-ocr-assets.mjs",
     "test": "vitest",
     "test:run": "vitest run",
     "lint": "tsc --noEmit"
