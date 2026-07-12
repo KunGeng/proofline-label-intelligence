@@ -1,0 +1,98 @@
+import type { QueueItem } from './queue';
+import { downloadCsv, serializeResults } from './export';
+
+const item = (overrides: Partial<QueueItem> = {}): QueueItem => ({
+  id: 'example',
+  file: new File(['label'], 'example.png', { type: 'image/png' }),
+  name: 'example.png',
+  size: 5,
+  status: 'ready',
+  progress: 1,
+  result: {
+    overallState: 'needs_review',
+    fields: [
+      {
+        field: 'brandName',
+        state: 'match',
+        expected: 'Old Tom',
+        observed: 'Old Tom',
+        reason: 'Exact text match.',
+      },
+      {
+        field: 'warningText',
+        state: 'mismatch',
+        expected: 'Expected',
+        observed: 'Observed',
+        reason: 'Text differs.',
+      },
+      {
+        field: 'warningTypography',
+        state: 'needs_review',
+        expected: 'Agent confirmation required',
+        observed: 'Awaiting agent confirmation',
+        reason: 'Agent review required.',
+      },
+      {
+        field: 'countryOfOrigin',
+        state: 'unreadable',
+        expected: 'Canada',
+        observed: '',
+        reason: 'No readable text.',
+      },
+    ],
+  },
+  ...overrides,
+});
+
+describe('serializeResults', () => {
+  it('uses the documented header order and reports field-state totals', () => {
+    expect(serializeResults([item()])).toBe(
+      'filename,status,overallState,matchCount,mismatchCount,needsReviewCount,unreadableCount,error\nexample.png,ready,needs_review,1,1,1,1,',
+    );
+  });
+
+  it('escapes commas, quotes, and line breaks without changing the schema', () => {
+    const result = serializeResults([
+      item({
+        name: 'Old, "Tom"\nReserve.png',
+        status: 'error',
+        result: undefined,
+        error: 'OCR said "no", retry.',
+      }),
+    ]);
+
+    expect(result).toBe(
+      'filename,status,overallState,matchCount,mismatchCount,needsReviewCount,unreadableCount,error\n"Old, ""Tom""\nReserve.png",error,,,,,,"OCR said ""no"", retry."',
+    );
+  });
+
+  it('returns the header alone for an empty queue', () => {
+    expect(serializeResults([])).toBe(
+      'filename,status,overallState,matchCount,mismatchCount,needsReviewCount,unreadableCount,error',
+    );
+  });
+});
+
+describe('downloadCsv', () => {
+  it('downloads a browser-local CSV and revokes its temporary object URL', () => {
+    const originalCreate = URL.createObjectURL;
+    const originalRevoke = URL.revokeObjectURL;
+    const create = vi.fn(() => 'blob:batch-results');
+    const revoke = vi.fn();
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: create });
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revoke });
+
+    try {
+      downloadCsv([item()]);
+
+      expect(create).toHaveBeenCalledWith(expect.any(Blob));
+      expect(click).toHaveBeenCalledTimes(1);
+      expect(revoke).toHaveBeenCalledWith('blob:batch-results');
+    } finally {
+      click.mockRestore();
+      Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: originalCreate });
+      Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: originalRevoke });
+    }
+  });
+});

@@ -1,12 +1,13 @@
 import type { ReactNode } from 'react';
 
-export type AppView = 'landing' | 'intake' | 'review';
+export type AppView = 'landing' | 'intake' | 'batch' | 'review';
 
 interface AppShellProps {
   activeView: AppView;
   children: ReactNode;
   onHome: () => void;
   onReviewLabel: () => void;
+  onReviewBatch: () => void;
 }
 
 export function AppShell({
@@ -14,6 +15,7 @@ export function AppShell({
   children,
   onHome,
   onReviewLabel,
+  onReviewBatch,
 }: AppShellProps) {
   return (
     <div className="app-frame">
@@ -41,6 +43,14 @@ export function AppShell({
             aria-current={activeView === 'intake' ? 'page' : undefined}
           >
             New review
+          </button>
+          <button
+            className={activeView === 'batch' ? 'nav-link nav-link--active' : 'nav-link'}
+            type="button"
+            onClick={onReviewBatch}
+            aria-current={activeView === 'batch' ? 'page' : undefined}
+          >
+            Batch review
           </button>
         </nav>
         <p className="session-note"><span aria-hidden="true">●</span> Browser session only</p>

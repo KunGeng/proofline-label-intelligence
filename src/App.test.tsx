@@ -3,10 +3,16 @@ import userEvent from '@testing-library/user-event';
 import { App } from './App';
 import { extractFromImage } from './features/extraction/ocr';
 import type { ExtractionJobResult } from './features/extraction/types';
+import { serializeResults } from './features/intake/export';
+import type { QueueItem } from './features/intake/queue';
 
 vi.mock('./features/extraction/ocr', () => ({
   extractFromImage: vi.fn(),
 }));
+
+afterEach(() => {
+  vi.mocked(extractFromImage).mockReset();
+});
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -37,6 +43,29 @@ const startManualReview = async (user: ReturnType<typeof userEvent.setup>): Prom
   await user.click(screen.getByRole('button', { name: /start evidence review/i }));
 };
 
+const batchFixture: QueueItem[] = [
+  {
+    id: 'mismatch',
+    file: new File(['label'], 'mismatch.png', { type: 'image/png' }),
+    name: 'mismatch.png',
+    size: 5,
+    status: 'ready',
+    progress: 1,
+    result: {
+      overallState: 'mismatch',
+      fields: [
+        {
+          field: 'brandName',
+          state: 'mismatch',
+          expected: 'Old Tom',
+          observed: 'Old Tom Reserve',
+          reason: 'High-confidence text conflicts with the application.',
+        },
+      ],
+    },
+  },
+];
+
 it('offers a guided demo and a label-review entry point', () => {
   render(<App />);
 
@@ -49,6 +78,83 @@ it('offers a guided demo and a label-review entry point', () => {
   expect(
     screen.getByRole('button', { name: /review a label/i }),
   ).toBeInTheDocument();
+});
+
+it('filters a completed batch and exports the visible review data', async () => {
+  const user = userEvent.setup();
+  render(<App initialBatchItems={batchFixture} />);
+
+  await user.selectOptions(screen.getByLabelText(/show/i), 'mismatch');
+
+  expect(screen.getAllByRole('row')).toHaveLength(2);
+  await user.click(screen.getByRole('button', { name: /export results/i }));
+  expect(serializeResults(batchFixture)).toContain('filename,status');
+});
+
+it('labels extraction-only batch rows as requiring application data', () => {
+  const extractionOnly: QueueItem[] = [
+    {
+      id: 'triage',
+      file: new File(['label'], 'triage.png', { type: 'image/png' }),
+      name: 'triage.png',
+      size: 5,
+      status: 'extracted_pending_application',
+      progress: 1,
+    },
+  ];
+
+  render(<App initialBatchItems={extractionOnly} />);
+
+  expect(screen.getByText('Application data required')).toBeInTheDocument();
+  expect(screen.queryByText(/^Match$/)).not.toBeInTheDocument();
+});
+
+it('requires the complete CSV application schema before a batch can begin', async () => {
+  const user = userEvent.setup();
+  const csv = new File(['filename,brandName\nlabel.png,Old Tom'], 'applications.csv', {
+    type: 'text/csv',
+  });
+  Object.defineProperty(csv, 'text', {
+    configurable: true,
+    value: async () => 'filename,brandName\nlabel.png,Old Tom',
+  });
+
+  render(<App />);
+  await user.click(screen.getByRole('button', { name: /review a batch/i }));
+  await user.upload(
+    screen.getByLabelText(/^choose label images$/i),
+    new File(['label'], 'label.png', { type: 'image/png' }),
+  );
+  await user.upload(screen.getByLabelText(/^optional application CSV$/i), csv);
+
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    'CSV has an incomplete application schema',
+  );
+});
+
+it('retries a failed batch extraction with the original image', async () => {
+  const user = userEvent.setup();
+  vi.mocked(extractFromImage).mockReset();
+  vi.mocked(extractFromImage)
+    .mockRejectedValueOnce(new Error('Temporary OCR failure'))
+    .mockResolvedValueOnce({
+      extraction: {},
+      rawText: 'OLD TOM',
+      source: 'ocr',
+    });
+
+  render(<App />);
+  await user.click(screen.getByRole('button', { name: /review a batch/i }));
+  await user.upload(
+    screen.getByLabelText(/^choose label images$/i),
+    new File(['label'], 'retry.png', { type: 'image/png' }),
+  );
+  await user.click(screen.getByRole('button', { name: /begin batch review/i }));
+
+  await user.click(await screen.findByRole('button', { name: /retry retry\.png/i }));
+
+  expect(await screen.findByText('Application data required')).toBeInTheDocument();
+  expect(extractFromImage).toHaveBeenCalledTimes(2);
 });
 
 it('opens the fixture-backed demo and requires warning typography confirmation', async () => {

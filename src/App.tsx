@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { AppShell, type AppView } from './components/AppShell';
+import { BatchQueue } from './components/BatchQueue';
 import { IntakeForm } from './components/IntakeForm';
 import { Landing } from './components/Landing';
 import { ReviewDesk, type CandidateField } from './components/ReviewDesk';
@@ -7,6 +8,7 @@ import { validateLabel } from './domain/validation';
 import type { ApplicationData, LabelExtraction } from './domain/types';
 import { oldTomDemo, OLD_TOM_RAW_TEXT } from './features/demo/cases';
 import { extractFromImage } from './features/extraction/ocr';
+import type { QueueItem } from './features/intake/queue';
 
 interface ActiveReview {
   phase: 'processing' | 'error' | 'ready';
@@ -51,8 +53,14 @@ const previewUrlFor = (file: File): string | undefined => {
   }
 };
 
-export function App() {
-  const [view, setView] = useState<AppView>('landing');
+interface AppProps {
+  initialBatchItems?: QueueItem[];
+}
+
+export function App({ initialBatchItems }: AppProps) {
+  const [view, setView] = useState<AppView>(() =>
+    initialBatchItems ? 'batch' : 'landing',
+  );
   const [review, setReview] = useState<ActiveReview>();
   const [warningTypographyConfirmed, setWarningTypographyConfirmed] = useState(false);
   const extractionRun = useRef(0);
@@ -67,7 +75,7 @@ export function App() {
     };
   }, [review?.objectUrl]);
 
-  const resetTo = (nextView: Extract<AppView, 'landing' | 'intake'>): void => {
+  const resetTo = (nextView: Extract<AppView, 'landing' | 'intake' | 'batch'>): void => {
     extractionRun.current += 1;
     setReview(undefined);
     setWarningTypographyConfirmed(false);
@@ -171,11 +179,21 @@ export function App() {
 
   const content = (() => {
     if (view === 'landing') {
-      return <Landing onOpenDemo={openDemo} onReviewLabel={() => resetTo('intake')} />;
+      return (
+        <Landing
+          onOpenDemo={openDemo}
+          onReviewLabel={() => resetTo('intake')}
+          onReviewBatch={() => resetTo('batch')}
+        />
+      );
     }
 
     if (view === 'intake') {
       return <IntakeForm onCancel={() => resetTo('landing')} onSubmit={startReview} />;
+    }
+
+    if (view === 'batch') {
+      return <BatchQueue initialItems={initialBatchItems} />;
     }
 
     if (review) {
@@ -207,7 +225,13 @@ export function App() {
       );
     }
 
-    return <Landing onOpenDemo={openDemo} onReviewLabel={() => resetTo('intake')} />;
+    return (
+      <Landing
+        onOpenDemo={openDemo}
+        onReviewLabel={() => resetTo('intake')}
+        onReviewBatch={() => resetTo('batch')}
+      />
+    );
   })();
 
   return (
@@ -215,6 +239,7 @@ export function App() {
       activeView={view}
       onHome={() => resetTo('landing')}
       onReviewLabel={() => resetTo('intake')}
+      onReviewBatch={() => resetTo('batch')}
     >
       {content}
     </AppShell>

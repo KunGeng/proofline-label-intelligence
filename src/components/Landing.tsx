@@ -1,9 +1,10 @@
 interface LandingProps {
   onOpenDemo: () => void;
   onReviewLabel: () => void;
+  onReviewBatch: () => void;
 }
 
-export function Landing({ onOpenDemo, onReviewLabel }: LandingProps) {
+export function Landing({ onOpenDemo, onReviewLabel, onReviewBatch }: LandingProps) {
   return (
     <>
       <section className="hero" aria-labelledby="proofline-heading">
@@ -20,6 +21,9 @@ export function Landing({ onOpenDemo, onReviewLabel }: LandingProps) {
             </button>
             <button type="button" className="button button--secondary" onClick={onOpenDemo}>
               Open guided demo
+            </button>
+            <button type="button" className="button button--secondary" onClick={onReviewBatch}>
+              Review a batch
             </button>
           </div>
           <p className="hero__privacy">No uploads leave this browser session.</p>
