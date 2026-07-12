@@ -101,6 +101,17 @@ it('offers a guided demo and a label-review entry point', () => {
   ).toBeInTheDocument();
 });
 
+it('offers a starter CSV and exact validation schema in batch intake', async () => {
+  const user = userEvent.setup();
+  render(<App />);
+
+  await user.click(screen.getByRole('button', { name: /review a batch/i }));
+
+  expect(screen.getByRole('link', { name: /download starter csv/i }))
+    .toHaveAttribute('href', '/batch-template.csv');
+  expect(screen.getByText(/brandName, classType, abv, netContents/i)).toBeInTheDocument();
+});
+
 it('filters a completed batch and exports the visible review data', async () => {
   const user = userEvent.setup();
   render(<App initialBatchItems={batchFixture} />);

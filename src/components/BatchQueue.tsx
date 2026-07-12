@@ -559,6 +559,17 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
               Use <code>filename</code> alone for extraction triage, or supply the complete
               application schema for validation. Partial schemas are rejected.
             </p>
+            <a className="batch-template-link" href="/batch-template.csv" download>
+              Download starter CSV
+            </a>
+            <p className="batch-csv-panel__schema">
+              For validation, include{' '}
+              <code>
+                filename, brandName, classType, abv, netContents, producerAddress, isImported
+              </code>.
+              {' '}Use <code>proof</code> when applicable and <code>countryOfOrigin</code> for
+              {' '}imported products.
+            </p>
             <label className="button button--secondary file-control">
               Optional application CSV
               <input

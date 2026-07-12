@@ -1376,6 +1376,31 @@ td:nth-child(4) {
   z-index: 1;
 }
 
+.batch-template-link {
+  display: inline-flex;
+  width: fit-content;
+  margin-top: 14px;
+  color: var(--forest);
+  font-size: 0.76rem;
+  font-weight: 800;
+  line-height: 1.35;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+.batch-template-link:hover {
+  color: var(--amber);
+}
+
+.batch-csv-panel__schema {
+  margin-top: 15px;
+}
+
+.batch-csv-panel__schema code {
+  overflow-wrap: anywhere;
+}
+
 .batch-dropzone .file-control,
 .batch-csv-panel .file-control {
   margin-top: 20px;
