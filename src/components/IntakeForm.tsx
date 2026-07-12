@@ -1,4 +1,11 @@
-import { useState, type ChangeEvent, type DragEvent, type FormEvent } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type DragEvent,
+  type FormEvent,
+} from 'react';
 import type { ApplicationData } from '../domain/types';
 import { ScopeNotice, SectionCard } from './ui';
 
@@ -12,6 +19,9 @@ const requiredApplicationFields = [
   ['netContents', 'Net contents'],
   ['producerAddress', 'Producer address'],
 ] as const;
+
+type RequiredApplicationFieldKey = (typeof requiredApplicationFields)[number][0];
+type RequiredFieldKey = RequiredApplicationFieldKey | 'countryOfOrigin' | 'labelImage';
 
 const emptyApplication: ApplicationData = {
   brandName: '',
@@ -45,12 +55,43 @@ export function IntakeForm({ onCancel, onSubmit }: IntakeFormProps) {
   const [application, setApplication] = useState<ApplicationData>(emptyApplication);
   const [file, setFile] = useState<File>();
   const [fileError, setFileError] = useState<string>();
-  const [formError, setFormError] = useState<string>();
+  const [invalidFields, setInvalidFields] = useState<RequiredFieldKey[]>([]);
+  const [focusRequest, setFocusRequest] = useState(0);
   const [dragging, setDragging] = useState(false);
+  const fieldRefs = useRef<Partial<Record<RequiredFieldKey, HTMLInputElement | null>>>({});
+  const focusAfterSubmit = useRef(false);
+  const firstInvalidField = invalidFields[0];
+  const invalidRequiredFields = requiredApplicationFields.filter(([field]) =>
+    invalidFields.includes(field),
+  );
+  const formError = invalidRequiredFields.length > 0
+    ? `Complete the required application facts: ${invalidRequiredFields
+      .map(([, label]) => label)
+      .join(', ')}.`
+    : application.isImported && invalidFields.includes('countryOfOrigin')
+      ? 'Country of origin is required for an imported product.'
+      : undefined;
+
+  useEffect(() => {
+    if (!focusAfterSubmit.current || !firstInvalidField) {
+      return;
+    }
+
+    fieldRefs.current[firstInvalidField]?.focus();
+    focusAfterSubmit.current = false;
+  }, [firstInvalidField, focusRequest]);
+
+  const reportInvalidFields = (fields: RequiredFieldKey[]): void => {
+    focusAfterSubmit.current = true;
+    setInvalidFields(fields);
+    setFocusRequest((current) => current + 1);
+  };
 
   const updateField = (field: keyof ApplicationData, value: string | boolean): void => {
     setApplication((current) => ({ ...current, [field]: value }));
-    setFormError(undefined);
+    setInvalidFields((current) =>
+      current.filter((invalidField) => invalidField !== field),
+    );
   };
 
   const chooseFile = (candidate: File | undefined): void => {
@@ -61,6 +102,9 @@ export function IntakeForm({ onCancel, onSubmit }: IntakeFormProps) {
     const error = validateImage(candidate);
     setFileError(error);
     setFile(error ? undefined : candidate);
+    setInvalidFields((current) =>
+      current.filter((invalidField) => invalidField !== 'labelImage'),
+    );
   };
 
   const onFileChange = (event: ChangeEvent<HTMLInputElement>): void => {
@@ -78,24 +122,25 @@ export function IntakeForm({ onCancel, onSubmit }: IntakeFormProps) {
 
     const missingFields = requiredApplicationFields
       .filter(([field]) => !application[field].trim())
-      .map(([, label]) => label);
+      .map(([field]) => field);
 
     if (missingFields.length > 0) {
-      setFormError(`Complete the required application facts: ${missingFields.join(', ')}.`);
+      reportInvalidFields(missingFields);
       return;
     }
 
     if (!file) {
       setFileError('Choose a JPEG, PNG, or WebP label image to begin review.');
+      reportInvalidFields(['labelImage']);
       return;
     }
 
     if (application.isImported && !application.countryOfOrigin?.trim()) {
-      setFormError('Country of origin is required for an imported product.');
+      reportInvalidFields(['countryOfOrigin']);
       return;
     }
 
-    setFormError(undefined);
+    setInvalidFields([]);
     void onSubmit(
       {
         ...application,
@@ -123,38 +168,67 @@ export function IntakeForm({ onCancel, onSubmit }: IntakeFormProps) {
 
       <form className="intake-form" onSubmit={submit} noValidate>
         <SectionCard title="Application facts" eyebrow="01 / Declared information">
+          <p className="required-note">Required fields are marked Required.</p>
           <div className="field-grid">
             <label>
-              Brand name
+              <span className="field-label">
+                Brand name <span className="required-indicator" aria-hidden="true">Required</span>
+              </span>
               <input
+                ref={(element) => {
+                  fieldRefs.current.brandName = element;
+                }}
                 value={application.brandName}
                 onChange={(event) => updateField('brandName', event.target.value)}
                 required
                 autoComplete="off"
+                aria-invalid={invalidFields.includes('brandName') || undefined}
+                aria-describedby={
+                  invalidFields.includes('brandName') ? 'application-facts-error' : undefined
+                }
               />
             </label>
             <label>
-              Class/type
+              <span className="field-label">
+                Class/type <span className="required-indicator" aria-hidden="true">Required</span>
+              </span>
               <input
+                ref={(element) => {
+                  fieldRefs.current.classType = element;
+                }}
                 value={application.classType}
                 onChange={(event) => updateField('classType', event.target.value)}
                 required
                 autoComplete="off"
                 placeholder="e.g. Straight Bourbon Whiskey"
+                aria-invalid={invalidFields.includes('classType') || undefined}
+                aria-describedby={
+                  invalidFields.includes('classType') ? 'application-facts-error' : undefined
+                }
               />
             </label>
             <label>
-              Alcohol by volume
+              <span className="field-label">
+                Alcohol by volume{' '}
+                <span className="required-indicator" aria-hidden="true">Required</span>
+              </span>
               <input
+                ref={(element) => {
+                  fieldRefs.current.abv = element;
+                }}
                 value={application.abv}
                 onChange={(event) => updateField('abv', event.target.value)}
                 required
                 autoComplete="off"
                 placeholder="e.g. 45%"
+                aria-invalid={invalidFields.includes('abv') || undefined}
+                aria-describedby={
+                  invalidFields.includes('abv') ? 'application-facts-error' : undefined
+                }
               />
             </label>
             <label>
-              Proof <span className="optional">Optional</span>
+              <span className="field-label">Proof <span className="optional">Optional</span></span>
               <input
                 value={application.proof ?? ''}
                 onChange={(event) => updateField('proof', event.target.value)}
@@ -163,23 +237,42 @@ export function IntakeForm({ onCancel, onSubmit }: IntakeFormProps) {
               />
             </label>
             <label>
-              Net contents
+              <span className="field-label">
+                Net contents <span className="required-indicator" aria-hidden="true">Required</span>
+              </span>
               <input
+                ref={(element) => {
+                  fieldRefs.current.netContents = element;
+                }}
                 value={application.netContents}
                 onChange={(event) => updateField('netContents', event.target.value)}
                 required
                 autoComplete="off"
                 placeholder="e.g. 750 mL"
+                aria-invalid={invalidFields.includes('netContents') || undefined}
+                aria-describedby={
+                  invalidFields.includes('netContents') ? 'application-facts-error' : undefined
+                }
               />
             </label>
             <label>
-              Producer address
+              <span className="field-label">
+                Producer address{' '}
+                <span className="required-indicator" aria-hidden="true">Required</span>
+              </span>
               <input
+                ref={(element) => {
+                  fieldRefs.current.producerAddress = element;
+                }}
                 value={application.producerAddress}
                 onChange={(event) => updateField('producerAddress', event.target.value)}
                 required
                 autoComplete="street-address"
                 placeholder="e.g. Distillery, City, State"
+                aria-invalid={invalidFields.includes('producerAddress') || undefined}
+                aria-describedby={
+                  invalidFields.includes('producerAddress') ? 'application-facts-error' : undefined
+                }
               />
             </label>
           </div>
@@ -198,17 +291,33 @@ export function IntakeForm({ onCancel, onSubmit }: IntakeFormProps) {
             </label>
             {application.isImported ? (
               <label>
-                Country of origin
+                <span className="field-label">
+                  Country of origin{' '}
+                  <span className="required-indicator" aria-hidden="true">Required</span>
+                </span>
                 <input
+                  ref={(element) => {
+                    fieldRefs.current.countryOfOrigin = element;
+                  }}
                   value={application.countryOfOrigin ?? ''}
                   onChange={(event) => updateField('countryOfOrigin', event.target.value)}
                   required
                   autoComplete="country-name"
+                  aria-invalid={invalidFields.includes('countryOfOrigin') || undefined}
+                  aria-describedby={
+                    invalidFields.includes('countryOfOrigin')
+                      ? 'application-facts-error'
+                      : undefined
+                  }
                 />
               </label>
             ) : null}
           </div>
-          {formError ? <p className="inline-error" role="alert">{formError}</p> : null}
+          {formError ? (
+            <p className="inline-error" id="application-facts-error" role="alert">
+              {formError}
+            </p>
+          ) : null}
         </SectionCard>
 
         <SectionCard title="Label image" eyebrow="02 / Evidence">
@@ -222,16 +331,23 @@ export function IntakeForm({ onCancel, onSubmit }: IntakeFormProps) {
             onDrop={onDrop}
           >
             <p className="dropzone__icon" aria-hidden="true">↥</p>
-            <p><strong>Drop one label image here</strong> or choose it from your device.</p>
+            <p>
+              <strong>Drop one label image here</strong>{' '}
+              <span className="required-indicator">Required</span> or choose it from your device.
+            </p>
             <p className="muted">JPEG, PNG, or WebP · 10 MB maximum · processed in this browser</p>
             <label className="button button--secondary file-control">
               Choose label image
               <input
+                ref={(element) => {
+                  fieldRefs.current.labelImage = element;
+                }}
                 type="file"
                 accept="image/jpeg,image/png,image/webp"
                 onChange={onFileChange}
+                required
                 aria-describedby={fileError ? 'file-error' : undefined}
-                aria-invalid={fileError ? true : undefined}
+                aria-invalid={fileError ? true : invalidFields.includes('labelImage') || undefined}
               />
             </label>
             {file ? <p className="selected-file">Ready: <strong>{file.name}</strong></p> : null}

@@ -536,6 +536,37 @@ h1,
   font-weight: 750;
 }
 
+.field-label {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: baseline;
+}
+
+.required-note {
+  margin: 0 0 20px;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+.required-indicator {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 5px;
+  color: var(--forest-deep);
+  font-size: 0.62rem;
+  font-weight: 850;
+  letter-spacing: 0.065em;
+  line-height: 1.2;
+  text-transform: uppercase;
+  background: var(--lime);
+  border: 1px solid #b9cc7b;
+  border-radius: 2px;
+  vertical-align: middle;
+}
+
 input:not([type="checkbox"]):not([type="file"]) {
   width: 100%;
   min-height: 48px;
@@ -552,6 +583,12 @@ input:not([type="checkbox"]):not([type="file"])::placeholder {
 
 input:not([type="checkbox"]):not([type="file"]):hover {
   border-color: var(--forest);
+}
+
+input:not([type="checkbox"]):not([type="file"])[aria-invalid="true"] {
+  background: #fff8f5;
+  border-color: var(--red);
+  box-shadow: 0 0 0 1px var(--red);
 }
 
 .optional {
@@ -674,6 +711,11 @@ input:not([type="checkbox"]):not([type="file"]):hover {
   color: var(--ink-soft);
   font-size: 0.72rem;
   font-weight: 600;
+}
+
+.file-control input[type="file"][aria-invalid="true"] {
+  outline: 2px solid var(--red);
+  outline-offset: 3px;
 }
 
 .file-control input[type="file"]::file-selector-button {
@@ -1893,6 +1935,10 @@ td:nth-child(4) {
   .import-fields,
   .evidence-column {
     grid-template-columns: 1fr;
+  }
+
+  .required-note {
+    margin-bottom: 16px;
   }
 
   .import-fields {

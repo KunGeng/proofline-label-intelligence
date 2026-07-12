@@ -501,6 +501,19 @@ it('blocks extraction until the required application facts are supplied', async 
   );
 });
 
+it('marks missing single-label requirements and focuses the first field after submit', async () => {
+  const user = userEvent.setup();
+  render(<App />);
+
+  await user.click(screen.getByRole('button', { name: /review a label/i }));
+  await user.click(screen.getByRole('button', { name: /start evidence review/i }));
+
+  const brand = screen.getByRole('textbox', { name: /^brand name$/i });
+  expect(brand).toHaveAttribute('aria-invalid', 'true');
+  expect(brand).toHaveFocus();
+  expect(screen.getByText('Required fields are marked Required.')).toBeInTheDocument();
+});
+
 it('keeps the reviewer informed when OCR rejects unexpectedly', async () => {
   const user = userEvent.setup();
   vi.mocked(extractFromImage).mockRejectedValueOnce(new Error('worker failed'));
