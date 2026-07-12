@@ -66,6 +66,26 @@ describe('serializeResults', () => {
     );
   });
 
+  it('neutralizes formula-leading user values without trimming ordinary text', () => {
+    const formulaValues = ['=SUM(A1:A2)', '+SUM(A1:A2)', '-10', '@malicious'];
+    const result = serializeResults(
+      formulaValues.map((value, index) => item({
+        id: `formula-${index}`,
+        name: value,
+        status: 'error',
+        result: undefined,
+        error: value,
+      })),
+    );
+
+    for (const value of formulaValues) {
+      expect(result).toContain(`'${value}`);
+    }
+    expect(serializeResults([
+      item({ name: ' =SUM(A1:A2)', status: 'error', result: undefined, error: '' }),
+    ])).toContain(' =SUM(A1:A2),error');
+  });
+
   it('returns the header alone for an empty queue', () => {
     expect(serializeResults([])).toBe(
       'filename,status,overallState,matchCount,mismatchCount,needsReviewCount,unreadableCount,error',

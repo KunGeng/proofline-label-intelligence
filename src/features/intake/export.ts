@@ -29,8 +29,11 @@ const countFieldStates = (item: QueueItem): ResultCounts =>
     return counts;
   }, emptyCounts()) ?? emptyCounts();
 
+const neutralizeFormula = (text: string): string =>
+  /^[=+\-@]/.test(text) ? `'${text}` : text;
+
 const escapeCell = (value: string | number): string => {
-  const text = String(value);
+  const text = neutralizeFormula(String(value));
 
   return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 };

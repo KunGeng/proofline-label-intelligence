@@ -37,6 +37,12 @@ interface BatchQueueProps {
   initialItems?: QueueItem[];
 }
 
+interface QueueGeneration {
+  queue: ReviewQueue;
+  activeOperations: number;
+  refreshTimer?: ReturnType<typeof window.setInterval>;
+}
+
 const queueStatusLabels: Record<QueueStatus, string> = {
   queued: 'Queued',
   preparing: 'Preparing image',
@@ -136,6 +142,8 @@ const statusFor = (item: QueueItem) => {
 
 export function BatchQueue({ initialItems }: BatchQueueProps) {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [csvPresent, setCsvPresent] = useState(false);
+  const [csvLoading, setCsvLoading] = useState(false);
   const [csvText, setCsvText] = useState<string>();
   const [csvName, setCsvName] = useState<string>();
   const [fileErrors, setFileErrors] = useState<string[]>([]);
@@ -144,44 +152,65 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
   const [filter, setFilter] = useState<QueueFilter>('all');
   const [filenameQuery, setFilenameQuery] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
-  const queueRef = useRef<ReviewQueue | undefined>(undefined);
+  const selectedFilesRef = useRef<File[]>([]);
+  const activeGenerationRef = useRef<QueueGeneration | undefined>(undefined);
+  const csvRequestRef = useRef(0);
   const mountedRef = useRef(true);
-  const activeOperationsRef = useRef(0);
-  const refreshTimerRef = useRef<ReturnType<typeof window.setInterval> | undefined>(undefined);
 
-  const syncItems = useCallback((queue = queueRef.current): void => {
-    if (!mountedRef.current || !queue || queueRef.current !== queue) {
+  const syncItems = useCallback((generation = activeGenerationRef.current): void => {
+    if (
+      !mountedRef.current ||
+      !generation ||
+      activeGenerationRef.current !== generation
+    ) {
       return;
     }
 
-    setItems([...queue.items]);
+    setItems([...generation.queue.items]);
   }, []);
 
-  const stopRefreshLoop = useCallback((): void => {
-    if (refreshTimerRef.current !== undefined) {
-      window.clearInterval(refreshTimerRef.current);
-      refreshTimerRef.current = undefined;
+  const stopRefreshLoop = useCallback((generation: QueueGeneration): void => {
+    if (generation.refreshTimer !== undefined) {
+      window.clearInterval(generation.refreshTimer);
+      generation.refreshTimer = undefined;
     }
   }, []);
 
-  const trackQueueWork = useCallback(
-    async (queue: ReviewQueue, work: () => Promise<void>): Promise<void> => {
-      activeOperationsRef.current += 1;
-      setIsProcessing(true);
-      syncItems(queue);
+  const retireActiveGeneration = useCallback((): void => {
+    const generation = activeGenerationRef.current;
+    if (!generation) {
+      return;
+    }
 
-      if (refreshTimerRef.current === undefined) {
-        refreshTimerRef.current = window.setInterval(() => syncItems(), 80);
+    generation.queue.clear();
+    stopRefreshLoop(generation);
+    activeGenerationRef.current = undefined;
+  }, [stopRefreshLoop]);
+
+  const trackQueueWork = useCallback(
+    async (generation: QueueGeneration, work: () => Promise<void>): Promise<void> => {
+      generation.activeOperations += 1;
+      if (activeGenerationRef.current === generation && mountedRef.current) {
+        setIsProcessing(true);
+        syncItems(generation);
+
+        if (generation.refreshTimer === undefined) {
+          generation.refreshTimer = window.setInterval(() => syncItems(generation), 80);
+        }
       }
 
       try {
         await work();
       } finally {
-        activeOperationsRef.current = Math.max(0, activeOperationsRef.current - 1);
-        syncItems(queue);
+        generation.activeOperations = Math.max(0, generation.activeOperations - 1);
+        if (activeGenerationRef.current !== generation) {
+          return;
+        }
 
-        if (activeOperationsRef.current === 0) {
-          stopRefreshLoop();
+        syncItems(generation);
+
+        if (generation.activeOperations === 0) {
+          stopRefreshLoop(generation);
           if (mountedRef.current) {
             setIsProcessing(false);
           }
@@ -197,14 +226,13 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
 
     return () => {
       mountedRef.current = false;
-      stopRefreshLoop();
-      queueRef.current?.clear();
-      queueRef.current = undefined;
+      csvRequestRef.current += 1;
+      retireActiveGeneration();
     };
-  }, [initialItems, stopRefreshLoop]);
+  }, [initialItems, retireActiveGeneration]);
 
   const validateCsv = (text: string | undefined, files: File[]): void => {
-    setCsvErrors(text && files.length > 0 ? parseBatchCsv(text, files).errors : []);
+    setCsvErrors(text !== undefined && files.length > 0 ? parseBatchCsv(text, files).errors : []);
   };
 
   const chooseImages = (event: ChangeEvent<HTMLInputElement>): void => {
@@ -227,25 +255,50 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
     });
 
     setSelectedFiles(validFiles);
+    selectedFilesRef.current = validFiles;
     setFileErrors(errors);
-    validateCsv(csvText, validFiles);
+    if (csvPresent && !csvLoading && csvText !== undefined) {
+      validateCsv(csvText, validFiles);
+    }
     event.target.value = '';
   };
 
   const chooseCsv = async (event: ChangeEvent<HTMLInputElement>): Promise<void> => {
     const file = event.target.files?.[0];
     event.target.value = '';
+    const request = csvRequestRef.current + 1;
+    csvRequestRef.current = request;
 
     if (!file) {
+      setCsvPresent(false);
+      setCsvLoading(false);
+      setCsvText(undefined);
+      setCsvName(undefined);
+      setCsvErrors([]);
       return;
     }
 
+    setCsvPresent(true);
+    setCsvLoading(true);
+    setCsvText(undefined);
+    setCsvName(file.name);
+    setCsvErrors([]);
+
     try {
       const nextText = await readCsvFile(file);
-      setCsvName(file.name);
+      if (request !== csvRequestRef.current || !mountedRef.current) {
+        return;
+      }
+
       setCsvText(nextText);
-      validateCsv(nextText, selectedFiles);
+      setCsvLoading(false);
+      validateCsv(nextText, selectedFilesRef.current);
     } catch {
+      if (request !== csvRequestRef.current || !mountedRef.current) {
+        return;
+      }
+
+      setCsvLoading(false);
       setCsvName(undefined);
       setCsvText(undefined);
       setCsvErrors(['The CSV could not be read. Choose a UTF-8 CSV and try again.']);
@@ -258,7 +311,11 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
       return;
     }
 
-    const csvResult = csvText ? parseBatchCsv(csvText, selectedFiles) : undefined;
+    if (csvPresent && (csvLoading || csvText === undefined)) {
+      return;
+    }
+
+    const csvResult = csvPresent ? parseBatchCsv(csvText ?? '', selectedFiles) : undefined;
     if (csvResult?.errors.length) {
       setCsvErrors(csvResult.errors);
       return;
@@ -268,33 +325,35 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
       ? [...csvResult.matched, ...triageJobsFor(csvResult.unmatchedFiles)]
       : triageJobsFor(selectedFiles);
 
-    queueRef.current?.clear();
+    retireActiveGeneration();
     const queue = createReviewQueue(jobs, queueWorkerFromExtractor(extractFromImage), 2);
-    queueRef.current = queue;
+    const generation: QueueGeneration = { queue, activeOperations: 0 };
+    activeGenerationRef.current = generation;
     setItems([...queue.items]);
     setFilter('all');
     setFilenameQuery('');
 
-    void trackQueueWork(queue, () => queue.start());
+    void trackQueueWork(generation, () => queue.start());
   };
 
   const retry = (id: string): void => {
-    const queue = queueRef.current;
-    if (!queue) {
+    const generation = activeGenerationRef.current;
+    if (!generation) {
       return;
     }
 
-    void trackQueueWork(queue, () => queue.retry(id));
+    void trackQueueWork(generation, () => generation.queue.retry(id));
   };
 
   const clearBatch = (): void => {
-    queueRef.current?.clear();
-    queueRef.current = undefined;
-    activeOperationsRef.current = 0;
-    stopRefreshLoop();
+    retireActiveGeneration();
+    csvRequestRef.current += 1;
+    selectedFilesRef.current = [];
     setIsProcessing(false);
     setItems([]);
     setSelectedFiles([]);
+    setCsvPresent(false);
+    setCsvLoading(false);
     setCsvText(undefined);
     setCsvName(undefined);
     setFileErrors([]);
@@ -326,6 +385,7 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
 
   const processedCount = items.filter((item) => processedStatuses.has(item.status)).length;
   const hasQueue = items.length > 0;
+  const hasBatchData = hasQueue || selectedFiles.length > 0 || csvPresent;
 
   return (
     <section className="batch-workspace" aria-labelledby="batch-heading">
@@ -338,7 +398,7 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
             evidence at a time, and every result remains in this session only.
           </p>
         </div>
-        {hasQueue ? (
+        {hasBatchData ? (
           <button type="button" className="button button--secondary" onClick={clearBatch}>
             Clear this batch
           </button>
@@ -387,7 +447,11 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
                 aria-describedby={csvErrors.length > 0 ? 'batch-csv-errors' : undefined}
               />
             </label>
-            {csvName ? <p className="selected-file">Ready: <strong>{csvName}</strong></p> : null}
+            {csvName ? (
+              <p className="selected-file" aria-live="polite">
+                {csvLoading ? `Reading ${csvName}…` : `Ready: ${csvName}`}
+              </p>
+            ) : null}
           </div>
         </div>
 
@@ -410,7 +474,13 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
             type="button"
             className="button button--primary"
             onClick={startBatch}
-            disabled={isProcessing || selectedFiles.length === 0 || csvErrors.length > 0}
+            disabled={
+              isProcessing ||
+              selectedFiles.length === 0 ||
+              csvLoading ||
+              (csvPresent && csvText === undefined) ||
+              csvErrors.length > 0
+            }
           >
             {isProcessing ? 'Batch review in progress' : 'Begin batch review'}
           </button>
@@ -495,7 +565,7 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
                           ) : '—'}
                         </td>
                         <td>
-                          {item.status === 'error' && queueRef.current ? (
+                          {item.status === 'error' && activeGenerationRef.current ? (
                             <button
                               type="button"
                               className="text-button"

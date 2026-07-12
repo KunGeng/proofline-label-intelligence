@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { App } from './App';
 import { extractFromImage } from './features/extraction/ocr';
@@ -155,6 +155,119 @@ it('retries a failed batch extraction with the original image', async () => {
 
   expect(await screen.findByText('Application data required')).toBeInTheDocument();
   expect(extractFromImage).toHaveBeenCalledTimes(2);
+});
+
+it('keeps a replacement batch processing when a cleared extraction settles late', async () => {
+  const user = userEvent.setup();
+  const oldExtraction = deferred<ExtractionJobResult>();
+  const newExtraction = deferred<ExtractionJobResult>();
+  vi.mocked(extractFromImage).mockImplementation((file) =>
+    file.name === 'old.png' ? oldExtraction.promise : newExtraction.promise,
+  );
+
+  render(<App />);
+  await user.click(screen.getByRole('button', { name: /review a batch/i }));
+  const imageInput = screen.getByLabelText(/^choose label images$/i);
+  await user.upload(imageInput, new File(['old'], 'old.png', { type: 'image/png' }));
+  await user.click(screen.getByRole('button', { name: /begin batch review/i }));
+
+  expect(screen.getByRole('button', { name: /batch review in progress/i })).toBeDisabled();
+  await user.click(screen.getByRole('button', { name: /clear this batch/i }));
+
+  await user.upload(imageInput, new File(['new'], 'new.png', { type: 'image/png' }));
+  await user.click(screen.getByRole('button', { name: /begin batch review/i }));
+  oldExtraction.resolve({ extraction: {}, rawText: 'OLD', source: 'ocr' });
+
+  await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+
+  await waitFor(() => {
+    expect(screen.getByRole('button', { name: /batch review in progress/i })).toBeDisabled();
+    expect(screen.getByText('0 of 1 processed')).toBeInTheDocument();
+  });
+
+  newExtraction.resolve({ extraction: {}, rawText: 'NEW', source: 'ocr' });
+  expect(await screen.findByText('Application data required')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /^begin batch review$/i })).toBeEnabled();
+});
+
+it('keeps the newest CSV selection while an earlier read resolves late', async () => {
+  const user = userEvent.setup();
+  const firstRead = deferred<string>();
+  const secondRead = deferred<string>();
+  const firstCsv = new File(['first'], 'first.csv', { type: 'text/csv' });
+  const secondCsv = new File(['second'], 'second.csv', { type: 'text/csv' });
+  Object.defineProperty(firstCsv, 'text', { configurable: true, value: () => firstRead.promise });
+  Object.defineProperty(secondCsv, 'text', { configurable: true, value: () => secondRead.promise });
+
+  render(<App />);
+  await user.click(screen.getByRole('button', { name: /review a batch/i }));
+  await user.upload(
+    screen.getByLabelText(/^choose label images$/i),
+    new File(['label'], 'label.png', { type: 'image/png' }),
+  );
+  const csvInput = screen.getByLabelText(/^optional application CSV$/i);
+  await user.upload(csvInput, firstCsv);
+
+  expect(screen.getByText('Reading first.csv…')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /begin batch review/i })).toBeDisabled();
+
+  await user.upload(csvInput, secondCsv);
+  firstRead.resolve('filename,brandName\nlabel.png,Old Tom');
+
+  await waitFor(() => {
+    expect(screen.getByText('Reading second.csv…')).toBeInTheDocument();
+    expect(screen.queryByText(/Ready: first\.csv/i)).not.toBeInTheDocument();
+  });
+
+  secondRead.resolve('filename\nlabel.png');
+
+  await waitFor(() => {
+    expect(screen.getByText(/Ready: second\.csv/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^begin batch review$/i })).toBeEnabled();
+  });
+});
+
+it('does not restore an in-flight CSV after the batch intake is cleared', async () => {
+  const user = userEvent.setup();
+  const csvRead = deferred<string>();
+  const csv = new File(['late'], 'late.csv', { type: 'text/csv' });
+  Object.defineProperty(csv, 'text', { configurable: true, value: () => csvRead.promise });
+
+  render(<App />);
+  await user.click(screen.getByRole('button', { name: /review a batch/i }));
+  await user.upload(
+    screen.getByLabelText(/^choose label images$/i),
+    new File(['label'], 'label.png', { type: 'image/png' }),
+  );
+  await user.upload(screen.getByLabelText(/^optional application CSV$/i), csv);
+
+  expect(screen.getByText('Reading late.csv…')).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: /clear this batch/i }));
+  csvRead.resolve('filename\nlabel.png');
+
+  await waitFor(() => {
+    expect(screen.queryByText(/Ready: late\.csv/i)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /begin batch review/i })).toBeDisabled();
+  });
+});
+
+it('rejects an empty optional CSV instead of silently running image-only triage', async () => {
+  const user = userEvent.setup();
+  const csv = new File([], 'empty.csv', { type: 'text/csv' });
+  Object.defineProperty(csv, 'text', { configurable: true, value: async () => '' });
+
+  render(<App />);
+  await user.click(screen.getByRole('button', { name: /review a batch/i }));
+  await user.upload(
+    screen.getByLabelText(/^choose label images$/i),
+    new File(['label'], 'label.png', { type: 'image/png' }),
+  );
+  await user.upload(screen.getByLabelText(/^optional application CSV$/i), csv);
+
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    'The filename CSV header is required.',
+  );
+  expect(screen.getByRole('button', { name: /begin batch review/i })).toBeDisabled();
 });
 
 it('opens the fixture-backed demo and requires warning typography confirmation', async () => {
