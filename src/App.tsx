@@ -1,14 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { AppShell, type AppView } from './components/AppShell';
 import { BatchQueue } from './components/BatchQueue';
 import { BenchmarkPanel } from './components/BenchmarkPanel';
+import { DemoLabelFixture } from './components/DemoLabelFixture';
 import { IntakeForm } from './components/IntakeForm';
 import { Landing } from './components/Landing';
 import { ReviewDesk, type CandidateField } from './components/ReviewDesk';
 import { validateLabel } from './domain/validation';
 import type { ApplicationData, LabelExtraction, ReviewFlags } from './domain/types';
-import { oldTomDemo, OLD_TOM_RAW_TEXT } from './features/demo/cases';
+import { demoCases } from './features/demo/cases';
 import { extractFromImage, prewarmOcr } from './features/extraction/ocr';
+import type { DemoCaseId } from './features/extraction/types';
 import type { QueueItem } from './features/intake/queue';
 
 interface ActiveReview {
@@ -20,8 +23,11 @@ interface ActiveReview {
   isGuidedDemo?: boolean;
   isManualEvidence?: boolean;
   imageUrl?: string;
+  imageClassName?: string;
+  evidencePreview?: ReactNode;
   objectUrl?: string;
   disclosure?: string;
+  shouldFocusReviewHeading?: boolean;
   error?: string;
   progress?: number;
   durationMs?: number;
@@ -160,18 +166,30 @@ export function App({ initialBatchItems }: AppProps) {
     }
   };
 
-  const openDemo = (): void => {
+  const openDemoCase = (id: DemoCaseId): void => {
+    const demoCase = demoCases.find((candidate) => candidate.id === id);
+    if (!demoCase) {
+      return;
+    }
+
     cancelActiveExtraction();
     resetVisualConfirmations();
     setReview({
       phase: 'ready',
-      title: oldTomDemo.title,
-      application: oldTomDemo.application,
-      extraction: asFixtureEvidence(oldTomDemo.extraction),
-      rawText: OLD_TOM_RAW_TEXT,
+      title: demoCase.title,
+      application: demoCase.application,
+      extraction: asFixtureEvidence(demoCase.extraction),
+      rawText: demoCase.rawText,
       isGuidedDemo: true,
-      imageUrl: oldTomDemo.imageUrl,
-      disclosure: oldTomDemo.disclosure,
+      imageUrl: demoCase.visual.kind === 'image' ? demoCase.visual.src : undefined,
+      imageClassName:
+        demoCase.visual.kind === 'image' ? demoCase.visual.className : undefined,
+      evidencePreview:
+        demoCase.visual.kind === 'fixture'
+          ? <DemoLabelFixture variant={demoCase.visual.variant} />
+          : undefined,
+      disclosure: demoCase.disclosure,
+      shouldFocusReviewHeading: true,
     });
     setView('review');
   };
@@ -291,7 +309,7 @@ export function App({ initialBatchItems }: AppProps) {
           ...current.extraction,
           [field]: candidate
             ? // A correction is a human-verified value: the OCR confidence no
-              // longer describes it, while the raw OCR text stays as evidence.
+              // longer describes it, while the original evidence text stays visible.
               { ...candidate, value, source: 'agent', confidence: 1 }
             : { value, rawText: '', confidence: 1, source: 'agent' },
         },
@@ -303,7 +321,7 @@ export function App({ initialBatchItems }: AppProps) {
     if (view === 'landing') {
       return (
         <Landing
-          onOpenDemo={openDemo}
+          onOpenDemoCase={openDemoCase}
           onReviewLabel={() => resetTo('intake')}
           onReviewBatch={() => resetTo('batch')}
           onOpenBenchmark={() => resetTo('benchmark')}
@@ -345,11 +363,14 @@ export function App({ initialBatchItems }: AppProps) {
           phase={review.phase}
           rawText={review.rawText}
           imageUrl={review.imageUrl}
+          imageClassName={review.imageClassName}
+          evidencePreview={review.evidencePreview}
           disclosure={review.disclosure}
           error={review.error}
           progress={review.progress}
           durationMs={review.durationMs}
           isGuidedDemo={Boolean(review.isGuidedDemo)}
+          shouldFocusReviewHeading={review.shouldFocusReviewHeading}
           shouldFocusManualDisclosure={Boolean(review.isManualEvidence)}
           slowExtraction={slowExtraction}
           stopAvailable={stopAvailable}
@@ -368,7 +389,7 @@ export function App({ initialBatchItems }: AppProps) {
 
     return (
       <Landing
-        onOpenDemo={openDemo}
+        onOpenDemoCase={openDemoCase}
         onReviewLabel={() => resetTo('intake')}
         onReviewBatch={() => resetTo('batch')}
         onOpenBenchmark={() => resetTo('benchmark')}

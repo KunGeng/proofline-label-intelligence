@@ -1,16 +1,22 @@
+import { useState } from 'react';
+import { demoCases } from '../features/demo/cases';
+import type { DemoCaseId } from '../features/extraction/types';
+
 interface LandingProps {
-  onOpenDemo: () => void;
+  onOpenDemoCase: (id: DemoCaseId) => void;
   onReviewLabel: () => void;
   onReviewBatch: () => void;
   onOpenBenchmark: () => void;
 }
 
 export function Landing({
-  onOpenDemo,
+  onOpenDemoCase,
   onReviewLabel,
   onReviewBatch,
   onOpenBenchmark,
 }: LandingProps) {
+  const [showScenarios, setShowScenarios] = useState(false);
+
   return (
     <>
       <section className="hero" aria-labelledby="proofline-heading">
@@ -25,12 +31,45 @@ export function Landing({
             <button type="button" className="button button--primary" onClick={onReviewLabel}>
               Review a label
             </button>
-            <button type="button" className="button button--secondary" onClick={onOpenDemo}>
+            <button
+              type="button"
+              className="button button--secondary"
+              onClick={() => onOpenDemoCase('clear')}
+            >
               Open guided demo
             </button>
             <button type="button" className="button button--secondary" onClick={onReviewBatch}>
               Review a batch
             </button>
+          </div>
+          <div className="scenario-library">
+            <button
+              type="button"
+              className="scenario-library__toggle"
+              aria-expanded={showScenarios}
+              aria-controls="guided-scenarios"
+              onClick={() => setShowScenarios((open) => !open)}
+            >
+              Explore scenarios
+            </button>
+            {showScenarios ? (
+              <div className="scenario-library__content" id="guided-scenarios">
+                <p>Each example uses disclosed precomputed evidence; no scenario runs live OCR.</p>
+                <div className="scenario-library__list">
+                  {demoCases.map((demoCase) => (
+                    <button
+                      key={demoCase.id}
+                      type="button"
+                      className="scenario-library__case"
+                      onClick={() => onOpenDemoCase(demoCase.id)}
+                    >
+                      <span>{demoCase.title}</span>
+                      <small>{demoCase.outcome}</small>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
           <p className="hero__privacy">No uploads leave this browser session.</p>
         </div>

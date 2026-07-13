@@ -175,6 +175,90 @@ it('offers a guided demo and a label-review entry point', () => {
   ).toBeInTheDocument();
 });
 
+it('opens an explicit foreign-origin scenario with fixture evidence and a review finding', async () => {
+  const user = userEvent.setup();
+  render(<App />);
+
+  await user.click(screen.getByRole('button', { name: /explore scenarios/i }));
+  expect(screen.getByRole('button', { name: /clear candidates, visual checks remain/i }))
+    .toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /declared-brand conflict/i }))
+    .toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /domestic declaration, foreign origin/i }))
+    .toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /title-case warning heading/i }))
+    .toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /low-confidence evidence/i }))
+    .toBeInTheDocument();
+  const foreignOrigin = screen.getByRole('button', {
+    name: /domestic declaration, foreign origin/i,
+  });
+  foreignOrigin.focus();
+  await user.keyboard('{Enter}');
+
+  expect(
+    screen.getByText(/precomputed illustrative fixture — not a live OCR timing result/i),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole('figure', { name: /illustrative label fixture/i }),
+  ).toHaveTextContent('Product of Scotland');
+  expect(
+    screen.getByRole('row', { name: /country of origin/i }),
+  ).toHaveTextContent('Needs review');
+  expect(screen.getByText(/fixture text: product of scotland/i)).toBeInTheDocument();
+  expect(screen.queryByText(/raw OCR: product of scotland/i)).not.toBeInTheDocument();
+  expect(screen.getByRole('heading', {
+    name: /domestic declaration \/ foreign-origin evidence/i,
+  })).toHaveFocus();
+});
+
+it('opens the declared-brand conflict with a visible mismatch', async () => {
+  const user = userEvent.setup();
+  render(<App />);
+
+  await user.click(screen.getByRole('button', { name: /explore scenarios/i }));
+  await user.click(screen.getByRole('button', { name: /declared-brand conflict/i }));
+
+  expect(
+    screen.getByText(/application brand intentionally conflicts with visible label evidence/i),
+  ).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: /^mismatch$/i })).toBeInTheDocument();
+  expect(screen.getByRole('row', { name: /brand name/i })).toHaveTextContent('Mismatch');
+});
+
+it('opens the title-case warning fixture with the shown warning-heading mismatch', async () => {
+  const user = userEvent.setup();
+  render(<App />);
+
+  await user.click(screen.getByRole('button', { name: /explore scenarios/i }));
+  await user.click(screen.getByRole('button', { name: /title-case warning heading/i }));
+
+  const fixture = screen.getByRole('figure', { name: /illustrative label fixture/i });
+  expect(fixture).toHaveTextContent('Produced by North Coast Spirits, Portland, OR');
+  expect(within(fixture).getByText('Government Warning:')).toBeInTheDocument();
+  expect(screen.getByRole('row', { name: /warning heading/i })).toHaveTextContent('Mismatch');
+});
+
+it('shows degraded Old Tom evidence as a low-confidence fixture without live OCR', async () => {
+  const user = userEvent.setup();
+  render(<App />);
+
+  await user.click(screen.getByRole('button', { name: /explore scenarios/i }));
+  await user.click(screen.getByRole('button', { name: /low-confidence evidence/i }));
+
+  expect(
+    screen.getByText(/precomputed low-confidence fixture shown with a visual degradation treatment/i),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole('img', {
+      name: /label preview: old tom distillery \/ degraded evidence/i,
+    }),
+  ).toHaveClass('label-preview__image--degraded');
+  expect(screen.getByRole('row', { name: /brand name/i })).toHaveTextContent('55% confidence');
+  expect(screen.getByRole('heading', { name: /^unreadable$/i })).toBeInTheDocument();
+  expect(extractFromImage).not.toHaveBeenCalled();
+});
+
 it('offers a starter CSV and exact validation schema in batch intake', async () => {
   const user = userEvent.setup();
   render(<App />);
@@ -657,7 +741,7 @@ it('orients the fixture-backed demo around the next three review actions', async
   expect(
     screen.getByRole('heading', { name: /a quick way through this sample/i }),
   ).toBeInTheDocument();
-  expect(screen.getByRole('link', { name: /inspect the raw ocr/i })).toHaveAttribute(
+  expect(screen.getByRole('link', { name: /inspect the fixture text/i })).toHaveAttribute(
     'href',
     '#raw-evidence',
   );
@@ -669,7 +753,7 @@ it('orients the fixture-backed demo around the next three review actions', async
     screen.getByRole('link', { name: /complete the visual typography check/i }),
   ).toHaveAttribute('href', '#typography-confirmation');
   expect(
-    screen.getByText(/precomputed sample — not a live OCR timing result/i),
+    screen.getByText(/precomputed fixture — not a live OCR timing result/i),
   ).toBeInTheDocument();
   expect(
     screen.getByRole('checkbox', {
@@ -1074,7 +1158,7 @@ it('clears a settled manual-path controller before subsequent navigation', async
   ).toBeInTheDocument();
 });
 
-it('preserves raw OCR evidence when an agent corrects an extracted candidate', async () => {
+it('preserves fixture evidence when an agent corrects an extracted candidate', async () => {
   const user = userEvent.setup();
   render(<App />);
 
@@ -1091,7 +1175,7 @@ it('preserves raw OCR evidence when an agent corrects an extracted candidate', a
   await user.click(screen.getByRole('button', { name: /save brand name correction/i }));
 
   expect(screen.getByText('Agent-entered')).toBeInTheDocument();
-  expect(screen.getByText(/raw OCR: OLD TOM DISTILLERY/i)).toBeInTheDocument();
+  expect(screen.getByText(/fixture text: OLD TOM DISTILLERY/i)).toBeInTheDocument();
 });
 
 it('lets an agent add a missing imported-origin candidate without fabricating raw OCR evidence', async () => {

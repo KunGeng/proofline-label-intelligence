@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { fieldLabel } from '../domain/validation';
 import type {
   Candidate,
@@ -30,6 +30,8 @@ interface ReviewDeskProps {
   phase: ReviewDeskPhase;
   rawText: string;
   imageUrl?: string;
+  imageClassName?: string;
+  evidencePreview?: ReactNode;
   disclosure?: string;
   error?: string;
   progress?: number;
@@ -84,6 +86,19 @@ const confidenceText = (candidate: Candidate): string =>
     ? 'Human-verified'
     : `${Math.round(candidate.confidence * 100)}% confidence`;
 
+const rawEvidenceLabel = (candidate: Candidate, isGuidedDemo: boolean): string => {
+  if (isGuidedDemo || candidate.source === 'fixture') {
+    return 'Fixture text';
+  }
+
+  return 'Raw OCR';
+};
+
+const emptyRawEvidenceText = (candidate: Candidate, isGuidedDemo: boolean): string =>
+  rawEvidenceLabel(candidate, isGuidedDemo) === 'Fixture text'
+    ? 'No fixture text was supplied for this candidate.'
+    : 'No raw OCR candidate was extracted.';
+
 const extractionTimeText = (durationMs: number): string =>
   `Local OCR finished in ${(durationMs / 1000).toFixed(1)} s on this device.`;
 
@@ -98,6 +113,8 @@ export function ReviewDesk({
   phase,
   rawText,
   imageUrl,
+  imageClassName,
+  evidencePreview,
   disclosure,
   error,
   progress,
@@ -379,8 +396,8 @@ export function ReviewDesk({
         {isGuidedDemo ? (
           <ol>
             <li>
-              <a href="#raw-evidence">Inspect the raw OCR</a> to see the text this sample
-              preserves as evidence.
+              <a href="#raw-evidence">Inspect the fixture text</a> to see the text this sample
+              preserves as precomputed evidence.
             </li>
             <li>
               <a href="#field-comparison">Inspect the field comparison</a> to compare the
@@ -388,7 +405,7 @@ export function ReviewDesk({
             </li>
             <li>
               <a href="#typography-confirmation">Complete the visual typography check</a> on
-              the label image. OCR cannot make that confirmation.
+              the label preview. Text extraction cannot make that confirmation.
             </li>
           </ol>
         ) : outstandingFields.length ? (
@@ -415,13 +432,19 @@ export function ReviewDesk({
       <div className="review-desk__grid">
         <aside className="evidence-column" aria-label="Label evidence">
           <SectionCard title="Label evidence" eyebrow="What the label shows">
-            {imageUrl ? (
-              <figure className="label-preview">
-                <img src={imageUrl} alt={`Label preview: ${title}`} />
-                <figcaption>Evidence stays attached to this review for the current browser session.</figcaption>
-              </figure>
-            ) : (
-              <p className="muted">No preview is available for this label.</p>
+            {evidencePreview ?? (
+              imageUrl ? (
+                <figure className="label-preview">
+                  <img
+                    className={imageClassName}
+                    src={imageUrl}
+                    alt={`Label preview: ${title}`}
+                  />
+                  <figcaption>Evidence stays attached to this review for the current browser session.</figcaption>
+                </figure>
+              ) : (
+                <p className="muted">No preview is available for this label.</p>
+              )
             )}
             <details className="raw-text" id="raw-evidence">
               <summary>View complete extracted text</summary>
@@ -520,7 +543,8 @@ export function ReviewDesk({
                                 <span>{confidenceText(candidate)}</span>
                               </div>
                               <p className="raw-evidence">
-                                Raw OCR: {candidate.rawText || 'No raw OCR candidate was extracted.'}
+                                {rawEvidenceLabel(candidate, isGuidedDemo)}:{' '}
+                                {candidate.rawText || emptyRawEvidenceText(candidate, isGuidedDemo)}
                               </p>
                               {candidateField ? (
                                 <>

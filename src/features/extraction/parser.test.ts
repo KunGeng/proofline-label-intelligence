@@ -1,9 +1,86 @@
 import { CANONICAL_WARNING_BODY } from '../../domain/constants';
-import { OLD_TOM_RAW_TEXT } from '../demo/cases';
+import { validateLabel } from '../../domain/validation';
+import { demoCases, OLD_TOM_RAW_TEXT } from '../demo/cases';
 import { createCandidateConfidenceResolver } from './confidence';
 import { extractFromText } from './parser';
 
 describe('extractFromText', () => {
+  it('derives every guided scenario from its disclosed raw evidence', () => {
+    const confidenceByCase = {
+      clear: 0.99,
+      mismatch: 0.99,
+      'foreign-origin': 0.96,
+      'warning-heading': 0.96,
+      degraded: 0.55,
+    } as const;
+
+    expect(demoCases.map((demoCase) => demoCase.id)).toEqual([
+      'clear',
+      'mismatch',
+      'foreign-origin',
+      'warning-heading',
+      'degraded',
+    ]);
+    expect(demoCases.map((demoCase) => demoCase.disclosure)).toEqual([
+      'Precomputed fixture — not a live OCR timing result.',
+      'Precomputed fixture using the shown Old Tom sample. The application brand intentionally conflicts with visible label evidence.',
+      'Precomputed illustrative fixture — not a live OCR timing result.',
+      'Precomputed illustrative fixture — not a live OCR timing result.',
+      'Precomputed low-confidence fixture shown with a visual degradation treatment — not a live OCR timing result.',
+    ]);
+
+    for (const demoCase of demoCases) {
+      expect(demoCase.extraction).toEqual(
+        extractFromText(demoCase.rawText, confidenceByCase[demoCase.id]),
+      );
+    }
+
+    expect(
+      demoCases.map((demoCase) =>
+        validateLabel({
+          application: demoCase.application,
+          extraction: demoCase.extraction,
+          flags: {
+            warningTypographyConfirmed: false,
+            warningLegibilityConfirmed: false,
+          },
+        }).overallState,
+      ),
+    ).toEqual([
+      'needs_review',
+      'mismatch',
+      'needs_review',
+      'mismatch',
+      'unreadable',
+    ]);
+  });
+
+  it('parses the foreign-origin and title-case fixture text exactly as shown', () => {
+    const foreignOrigin = demoCases.find((demoCase) => demoCase.id === 'foreign-origin');
+    const warningHeading = demoCases.find((demoCase) => demoCase.id === 'warning-heading');
+
+    expect(foreignOrigin?.rawText).toContain('Imported by Harbor Imports, Boston, MA');
+    expect(foreignOrigin?.rawText).toContain('Product of Scotland');
+    expect(foreignOrigin?.extraction.producerAddress).toMatchObject({
+      value: 'Harbor Imports, Boston, MA',
+      rawText: 'Imported by Harbor Imports, Boston, MA',
+    });
+    expect(foreignOrigin?.extraction.countryOfOrigin).toMatchObject({
+      value: 'Scotland',
+      rawText: 'Product of Scotland',
+      confidence: 0.96,
+    });
+    expect(warningHeading?.rawText).toContain(
+      'Produced by North Coast Spirits, Portland, OR',
+    );
+    expect(warningHeading?.rawText).toContain(`Government Warning: ${CANONICAL_WARNING_BODY}`);
+    expect(warningHeading?.extraction.warningHeading).toMatchObject({
+      value: 'Government Warning:',
+      rawText: 'Government Warning:',
+      confidence: 0.96,
+    });
+  });
+
   it('extracts the supplied bourbon facts from readable OCR text', () => {
     const extraction = extractFromText(OLD_TOM_RAW_TEXT, 0.96);
 

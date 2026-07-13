@@ -34,11 +34,26 @@ export type ExtractFromImage = (
   options?: ExtractionOptions,
 ) => Promise<ExtractionJobResult>;
 
+export type DemoCaseId =
+  | 'clear'
+  | 'mismatch'
+  | 'foreign-origin'
+  | 'warning-heading'
+  | 'degraded';
+
+export type DemoFixtureVariant = 'foreign-origin' | 'warning-heading';
+
+export type DemoVisual =
+  | { kind: 'image'; src: string; className?: string }
+  | { kind: 'fixture'; variant: DemoFixtureVariant };
+
 export interface DemoCase {
-  id: string;
+  id: DemoCaseId;
   title: string;
-  imageUrl: string;
+  outcome: string;
   disclosure: string;
   application: ApplicationData;
   extraction: LabelExtraction;
+  rawText: string;
+  visual: DemoVisual;
 }
