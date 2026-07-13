@@ -45,7 +45,8 @@ interface ReviewDeskProps {
   warningLegibilityConfirmed: boolean;
   onWarningLegibilityConfirmed: (confirmed: boolean) => void;
   onCorrectCandidate: (field: CandidateField, value: string) => void;
-  onStartAnother: () => void;
+  exitLabel?: string;
+  onExit: () => void;
 }
 
 const candidateFor = (
@@ -111,7 +112,8 @@ export function ReviewDesk({
   warningLegibilityConfirmed,
   onWarningLegibilityConfirmed,
   onCorrectCandidate,
-  onStartAnother,
+  exitLabel,
+  onExit,
 }: ReviewDeskProps) {
   const [editingField, setEditingField] = useState<CandidateField>();
   const [correction, setCorrection] = useState('');
@@ -259,8 +261,8 @@ export function ReviewDesk({
             </p>
           ) : null}
         </div>
-        <button type="button" className="button button--secondary" onClick={onStartAnother}>
-          Review another label
+        <button type="button" className="button button--secondary" onClick={onExit}>
+          {exitLabel ?? 'Review another label'}
         </button>
       </div>
 
@@ -327,7 +329,7 @@ export function ReviewDesk({
           <p>
             {error ?? 'Try a clearer image or begin a new evidence review.'}
           </p>
-          <button type="button" className="button button--secondary" onClick={onStartAnother}>
+          <button type="button" className="button button--secondary" onClick={onExit}>
             Choose another label
           </button>
         </section>

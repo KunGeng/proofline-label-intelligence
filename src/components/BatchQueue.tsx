@@ -7,11 +7,12 @@ import {
   useState,
   type ChangeEvent,
 } from 'react';
-import { fieldLabel } from '../domain/validation';
+import { fieldLabel, validateLabel } from '../domain/validation';
 import type {
   Candidate,
   FieldKey,
   LabelExtraction,
+  ReviewFlags,
   ReviewState,
 } from '../domain/types';
 import { extractFromImage } from '../features/extraction/ocr';
@@ -32,6 +33,7 @@ import {
   SourceChip,
   StatusBadge,
 } from './ui';
+import { ReviewDesk, type CandidateField } from './ReviewDesk';
 
 const MAX_BATCH_FILES = 300;
 const BATCH_WORKER_COUNT = 2;
@@ -268,6 +270,91 @@ const statusFor = (item: QueueItem) => {
   );
 };
 
+const revalidateItem = (item: QueueItem): void => {
+  if (!item.application || !item.extraction) {
+    return;
+  }
+
+  item.result = validateLabel({
+    application: item.application,
+    extraction: item.extraction,
+    flags: item.reviewFlags,
+  });
+};
+
+const noop = (): void => undefined;
+
+interface BatchFullReviewProps {
+  item: QueueItem;
+  onBack: () => void;
+  onCorrectCandidate: (field: CandidateField, value: string) => void;
+  onUpdateFlags: (flags: Partial<ReviewFlags>) => void;
+}
+
+function BatchFullReview({
+  item,
+  onBack,
+  onCorrectCandidate,
+  onUpdateFlags,
+}: BatchFullReviewProps) {
+  const [imageUrl, setImageUrl] = useState<string>();
+
+  useEffect(() => {
+    if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') {
+      setImageUrl(undefined);
+      return;
+    }
+
+    let objectUrl: string | undefined;
+    try {
+      objectUrl = URL.createObjectURL(item.file);
+      setImageUrl(objectUrl);
+    } catch {
+      setImageUrl(undefined);
+    }
+
+    return () => {
+      if (
+        objectUrl &&
+        typeof URL.revokeObjectURL === 'function'
+      ) {
+        URL.revokeObjectURL(objectUrl);
+      }
+    };
+  }, [item.file]);
+
+  return (
+    <div className="batch-full-review">
+      <ReviewDesk
+        title={item.name}
+        extraction={item.extraction!}
+        result={item.result}
+        phase="ready"
+        rawText={item.rawText ?? ''}
+        imageUrl={imageUrl}
+        durationMs={item.durationMs}
+        isGuidedDemo={false}
+        shouldFocusManualDisclosure={false}
+        slowExtraction={false}
+        stopAvailable={false}
+        onManualReview={noop}
+        onStopOcr={noop}
+        warningTypographyConfirmed={item.reviewFlags.warningTypographyConfirmed}
+        onWarningTypographyConfirmed={(confirmed) =>
+          onUpdateFlags({ warningTypographyConfirmed: confirmed })
+        }
+        warningLegibilityConfirmed={item.reviewFlags.warningLegibilityConfirmed}
+        onWarningLegibilityConfirmed={(confirmed) =>
+          onUpdateFlags({ warningLegibilityConfirmed: confirmed })
+        }
+        onCorrectCandidate={onCorrectCandidate}
+        exitLabel="Back to batch"
+        onExit={onBack}
+      />
+    </div>
+  );
+}
+
 export function BatchQueue({ initialItems }: BatchQueueProps) {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [csvPresent, setCsvPresent] = useState(false);
@@ -280,11 +367,17 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
   const [filter, setFilter] = useState<QueueFilter>('all');
   const [filenameQuery, setFilenameQuery] = useState('');
   const [expandedEvidenceId, setExpandedEvidenceId] = useState<string>();
+  const [fullReviewItemId, setFullReviewItemId] = useState<string>();
+  const [returnFocusItemId, setReturnFocusItemId] = useState<string>();
   const [isProcessing, setIsProcessing] = useState(false);
   const selectedFilesRef = useRef<File[]>([]);
   const activeGenerationRef = useRef<QueueGeneration | undefined>(undefined);
   const csvRequestRef = useRef(0);
   const mountedRef = useRef(true);
+  const fullReviewTriggerRefs = useRef<
+    Partial<Record<string, HTMLButtonElement | null>>
+  >({});
+  const queueFilterRef = useRef<HTMLSelectElement>(null);
 
   const syncItems = useCallback((generation = activeGenerationRef.current): void => {
     if (
@@ -353,6 +446,8 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
     mountedRef.current = true;
     setItems(initialItems ? [...initialItems] : []);
     setExpandedEvidenceId(undefined);
+    setFullReviewItemId(undefined);
+    setReturnFocusItemId(undefined);
 
     return () => {
       mountedRef.current = false;
@@ -360,6 +455,20 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
       retireActiveGeneration();
     };
   }, [initialItems, retireActiveGeneration]);
+
+  useEffect(() => {
+    if (fullReviewItemId !== undefined || !returnFocusItemId) {
+      return;
+    }
+
+    const trigger = fullReviewTriggerRefs.current[returnFocusItemId];
+    if (trigger) {
+      trigger.focus();
+    } else {
+      queueFilterRef.current?.focus();
+    }
+    setReturnFocusItemId(undefined);
+  }, [fullReviewItemId, returnFocusItemId]);
 
   const validateCsv = (text: string | undefined, files: File[]): void => {
     setCsvErrors(text !== undefined && files.length > 0 ? parseBatchCsv(text, files).errors : []);
@@ -480,6 +589,74 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
     void trackQueueWork(generation, () => generation.queue.retry(id));
   };
 
+  const updateBatchCandidate = useCallback(
+    (field: CandidateField, value: string): void => {
+      const itemId = fullReviewItemId;
+      if (!itemId) {
+        return;
+      }
+
+      setItems((current) => {
+        const item = current.find((candidate) => candidate.id === itemId);
+        const extraction = item?.extraction;
+        if (!item?.application || !extraction) {
+          return current;
+        }
+
+        const previous = extraction[field];
+        item.extraction = {
+          ...extraction,
+          [field]: previous
+            ? {
+                ...previous,
+                value,
+                confidence: 1,
+                source: 'agent',
+              }
+            : { value, rawText: '', confidence: 1, source: 'agent' },
+        };
+        revalidateItem(item);
+
+        return [...current];
+      });
+    },
+    [fullReviewItemId],
+  );
+
+  const updateBatchReviewFlags = useCallback(
+    (flags: Partial<ReviewFlags>): void => {
+      const itemId = fullReviewItemId;
+      if (!itemId) {
+        return;
+      }
+
+      setItems((current) => {
+        const item = current.find((candidate) => candidate.id === itemId);
+        if (!item?.application || !item.extraction) {
+          return current;
+        }
+
+        item.reviewFlags = { ...item.reviewFlags, ...flags };
+        revalidateItem(item);
+
+        return [...current];
+      });
+    },
+    [fullReviewItemId],
+  );
+
+  const openFullReview = (id: string): void => {
+    setReturnFocusItemId(undefined);
+    setFullReviewItemId(id);
+  };
+
+  const closeFullReview = (): void => {
+    if (fullReviewItemId) {
+      setReturnFocusItemId(fullReviewItemId);
+    }
+    setFullReviewItemId(undefined);
+  };
+
   const clearBatch = (): void => {
     retireActiveGeneration();
     csvRequestRef.current += 1;
@@ -496,6 +673,8 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
     setFilter('all');
     setFilenameQuery('');
     setExpandedEvidenceId(undefined);
+    setFullReviewItemId(undefined);
+    setReturnFocusItemId(undefined);
   };
 
   const visibleItems = useMemo(() => {
@@ -542,6 +721,19 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
         ? `Two local workers are processing label evidence — averaging ${formatSeconds(averageDurationMs)} per label, ${remainingEstimate} remaining.`
         : 'Two local workers are processing label evidence.'
       : 'Two local workers maximum';
+  const fullReviewItem = items.find((item) => item.id === fullReviewItemId);
+
+  if (fullReviewItem?.application && fullReviewItem.extraction) {
+    return (
+      <BatchFullReview
+        key={fullReviewItem.id}
+        item={fullReviewItem}
+        onBack={closeFullReview}
+        onCorrectCandidate={updateBatchCandidate}
+        onUpdateFlags={updateBatchReviewFlags}
+      />
+    );
+  }
 
   return (
     <section className="batch-workspace" aria-labelledby="batch-heading">
@@ -674,7 +866,11 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
           <div className="batch-filters">
             <label>
               Show
-              <select value={filter} onChange={(event) => setFilter(event.target.value as QueueFilter)}>
+              <select
+                ref={queueFilterRef}
+                value={filter}
+                onChange={(event) => setFilter(event.target.value as QueueFilter)}
+              >
                 <option value="all">All labels</option>
                 <option value="mismatch">Mismatches</option>
                 <option value="needs_review">Needs review</option>
@@ -773,6 +969,19 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
                                   {isEvidenceOpen
                                     ? `Hide evidence for ${item.name}`
                                     : `View evidence for ${item.name}`}
+                                </button>
+                              ) : null}
+                              {item.status === 'ready' && item.application && item.extraction ? (
+                                <button
+                                  ref={(element) => {
+                                    fullReviewTriggerRefs.current[item.id] = element;
+                                  }}
+                                  type="button"
+                                  className="text-button"
+                                  onClick={() => openFullReview(item.id)}
+                                  aria-label={`Open full review for ${item.name}`}
+                                >
+                                  Open full review
                                 </button>
                               ) : null}
                               {item.status === 'error' && activeGenerationRef.current ? (

@@ -360,7 +360,8 @@ export function App({ initialBatchItems }: AppProps) {
           warningLegibilityConfirmed={warningLegibilityConfirmed}
           onWarningLegibilityConfirmed={setWarningLegibilityConfirmed}
           onCorrectCandidate={correctCandidate}
-          onStartAnother={() => resetTo('intake')}
+          exitLabel="Review another label"
+          onExit={() => resetTo('intake')}
         />
       );
     }

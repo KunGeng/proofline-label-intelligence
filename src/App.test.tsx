@@ -3,7 +3,8 @@ import userEvent from '@testing-library/user-event';
 import { StrictMode } from 'react';
 import { App } from './App';
 import { CANONICAL_WARNING_BODY, CANONICAL_WARNING_HEADING } from './domain/constants';
-import type { Candidate } from './domain/types';
+import { validateLabel } from './domain/validation';
+import type { ApplicationData, Candidate, LabelExtraction, ReviewFlags } from './domain/types';
 import { extractFromImage, prewarmOcr } from './features/extraction/ocr';
 import type { ExtractionJobResult } from './features/extraction/types';
 import { serializeResults } from './features/intake/export';
@@ -69,6 +70,11 @@ const startPendingManualReview = async (
   fireEvent.click(submit);
 };
 
+const emptyReviewFlags = (): ReviewFlags => ({
+  warningTypographyConfirmed: false,
+  warningLegibilityConfirmed: false,
+});
+
 const batchFixture: QueueItem[] = [
   {
     id: 'mismatch',
@@ -77,6 +83,7 @@ const batchFixture: QueueItem[] = [
     size: 5,
     status: 'ready',
     progress: 1,
+    reviewFlags: emptyReviewFlags(),
     result: {
       overallState: 'mismatch',
       fields: [
@@ -100,16 +107,59 @@ const batchErrorFixture: QueueItem[] = [
     size: 5,
     status: 'error',
     progress: 1,
+    reviewFlags: emptyReviewFlags(),
     error: 'Temporary OCR failure',
   },
 ];
 
-const ocrCandidate = (value: string): Candidate => ({
+const ocrCandidate = (value: string, rawText = value): Candidate => ({
   value,
-  rawText: value,
+  rawText,
   confidence: 0.99,
   source: 'ocr',
 });
+
+const batchApplication: ApplicationData = {
+  brandName: 'OLD TOM',
+  classType: 'Bourbon Whiskey',
+  abv: '45%',
+  proof: '90 Proof',
+  netContents: '750 mL',
+  producerAddress: 'Example, KY',
+  isImported: false,
+};
+
+const matchingBatchExtraction = (): LabelExtraction => ({
+  brandName: ocrCandidate('OLD TOM', 'OLD TOM FROM OCR'),
+  classType: ocrCandidate('Bourbon Whiskey'),
+  abv: ocrCandidate('45%'),
+  proof: ocrCandidate('90 Proof'),
+  netContents: ocrCandidate('750 mL'),
+  producerAddress: ocrCandidate('Example, KY'),
+  warningText: ocrCandidate(CANONICAL_WARNING_BODY),
+  warningHeading: ocrCandidate(CANONICAL_WARNING_HEADING),
+});
+
+const readyBatchItem = (name = 'ready.png'): QueueItem => {
+  const application = { ...batchApplication };
+  const extraction = matchingBatchExtraction();
+  const reviewFlags = emptyReviewFlags();
+
+  return {
+    id: name,
+    file: new File(['label'], name, { type: 'image/png' }),
+    name,
+    size: 5,
+    application,
+    reviewFlags,
+    status: 'ready',
+    progress: 1,
+    extraction,
+    rawText: 'OLD TOM FROM OCR',
+    source: 'ocr',
+    result: validateLabel({ application, extraction, flags: reviewFlags }),
+  };
+};
 
 it('offers a guided demo and a label-review entry point', () => {
   render(<App />);
@@ -174,6 +224,7 @@ it('labels extraction-only batch rows as requiring application data', () => {
       size: 5,
       status: 'extracted_pending_application',
       progress: 1,
+      reviewFlags: emptyReviewFlags(),
     },
   ];
 
@@ -181,6 +232,9 @@ it('labels extraction-only batch rows as requiring application data', () => {
 
   expect(screen.getByText('Application data required')).toBeInTheDocument();
   expect(screen.queryByText(/^Match$/)).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole('button', { name: /open full review for triage\.png/i }),
+  ).not.toBeInTheDocument();
 });
 
 it('renders extracted evidence for a filename-only triage row after its detail control opens', async () => {
@@ -193,6 +247,7 @@ it('renders extracted evidence for a filename-only triage row after its detail c
       size: 5,
       status: 'extracted_pending_application',
       progress: 1,
+      reviewFlags: emptyReviewFlags(),
       thumbnailUrl: 'blob:triage-evidence-preview',
       rawText: 'OLD TOM\n45% Alc./Vol.',
       extraction: {
@@ -220,6 +275,201 @@ it('renders extracted evidence for a filename-only triage row after its detail c
   expect(detail).toHaveTextContent('Raw OCR');
   expect(detail).toHaveTextContent('45% Alc./Vol.');
   expect(screen.getByRole('img', { name: /label preview: triage-evidence\.png/i })).toBeInTheDocument();
+});
+
+it('opens a ready batch row in full review without re-running OCR', async () => {
+  const user = userEvent.setup();
+  render(<App initialBatchItems={[readyBatchItem()]} />);
+
+  await user.click(
+    screen.getByRole('button', { name: /open full review for ready\.png/i }),
+  );
+
+  expect(screen.getByRole('button', { name: /back to batch/i })).toBeInTheDocument();
+  expect(extractFromImage).not.toHaveBeenCalled();
+});
+
+it('returns focus to the full-review row action after going back to the batch', async () => {
+  const user = userEvent.setup();
+  render(<App initialBatchItems={[readyBatchItem()]} />);
+
+  const trigger = screen.getByRole('button', {
+    name: /open full review for ready\.png/i,
+  });
+  await user.click(trigger);
+  await user.click(screen.getByRole('button', { name: /back to batch/i }));
+
+  await waitFor(() => {
+    expect(
+      screen.getByRole('button', { name: /open full review for ready\.png/i }),
+    ).toHaveFocus();
+  });
+});
+
+it('releases the full-review object URL when returning to the batch', async () => {
+  const user = userEvent.setup();
+  const item = readyBatchItem();
+  const originalCreate = URL.createObjectURL;
+  const originalRevoke = URL.revokeObjectURL;
+  const create = vi.fn(() => 'blob:batch-full-review');
+  const revoke = vi.fn();
+  Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: create });
+  Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revoke });
+
+  try {
+    render(<App initialBatchItems={[item]} />);
+
+    await user.click(
+      screen.getByRole('button', { name: /open full review for ready\.png/i }),
+    );
+
+    expect(create).toHaveBeenCalledWith(item.file);
+    await user.click(screen.getByRole('button', { name: /back to batch/i }));
+
+    await waitFor(() => {
+      expect(revoke).toHaveBeenCalledWith('blob:batch-full-review');
+    });
+  } finally {
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: originalCreate,
+    });
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: originalRevoke,
+    });
+  }
+});
+
+it('revalidates each batch visual confirmation and preserves the queue filter and search after returning', async () => {
+  const user = userEvent.setup();
+  render(<App initialBatchItems={[readyBatchItem()]} />);
+
+  await user.selectOptions(screen.getByLabelText(/^show$/i), 'needs_review');
+  const search = screen.getByRole('searchbox', { name: /search filename/i });
+  await user.type(search, 'ready');
+  await user.click(
+    screen.getByRole('button', { name: /open full review for ready\.png/i }),
+  );
+
+  await user.click(
+    screen.getByRole('checkbox', {
+      name: /i visually confirmed the warning heading is uppercase and bold/i,
+    }),
+  );
+  await user.click(screen.getByRole('button', { name: /back to batch/i }));
+
+  expect(screen.getByLabelText(/^show$/i)).toHaveValue('needs_review');
+  expect(screen.getByRole('searchbox', { name: /search filename/i })).toHaveValue('ready');
+  const row = screen.getByRole('row', { name: /ready\.png/i });
+  expect(within(row).getAllByRole('cell')[3]).toHaveTextContent('1');
+
+  await user.click(
+    screen.getByRole('button', { name: /open full review for ready\.png/i }),
+  );
+  await user.click(
+    screen.getByRole('checkbox', {
+      name: /i reviewed warning legibility, contrast, and placement/i,
+    }),
+  );
+  await user.click(screen.getByRole('button', { name: /back to batch/i }));
+
+  expect(screen.getByLabelText(/^show$/i)).toHaveValue('needs_review');
+  expect(screen.getByRole('searchbox', { name: /search filename/i })).toHaveValue('ready');
+  expect(screen.getByText(/no matching labels/i)).toBeInTheDocument();
+  expect(screen.getByLabelText(/^show$/i)).toHaveFocus();
+  await user.selectOptions(screen.getByLabelText(/^show$/i), 'match');
+  expect(screen.getByRole('row', { name: /ready\.png/i })).toHaveTextContent('Match');
+  expect(extractFromImage).not.toHaveBeenCalled();
+});
+
+it('keeps raw OCR evidence when a batch correction becomes agent-entered', async () => {
+  const user = userEvent.setup();
+  const item = readyBatchItem();
+  render(<App initialBatchItems={[item]} />);
+
+  await user.click(
+    screen.getByRole('button', { name: /open full review for ready\.png/i }),
+  );
+  await user.click(
+    screen.getByRole('button', { name: /correct brand name candidate/i }),
+  );
+  const correction = screen.getByRole('textbox', {
+    name: /brand name corrected candidate/i,
+  });
+  await user.clear(correction);
+  await user.type(correction, 'OLD TOM RESERVE');
+  await user.click(
+    screen.getByRole('button', { name: /save brand name correction/i }),
+  );
+
+  const brandRow = screen.getByRole('row', { name: /brand name/i });
+  expect(brandRow).toHaveTextContent('Agent-entered');
+  expect(brandRow).toHaveTextContent('Human-verified');
+  expect(brandRow).toHaveTextContent('Raw OCR: OLD TOM FROM OCR');
+  expect(item.extraction?.brandName).toMatchObject({
+    value: 'OLD TOM RESERVE',
+    rawText: 'OLD TOM FROM OCR',
+    confidence: 1,
+    source: 'agent',
+  });
+
+  await user.click(screen.getByRole('button', { name: /back to batch/i }));
+  expect(screen.getByRole('row', { name: /ready\.png/i })).toHaveTextContent('Mismatch');
+});
+
+it('keeps active batch work running while a ready item is in full review', async () => {
+  const user = userEvent.setup();
+  const secondExtraction = deferred<ExtractionJobResult>();
+  const first = readyBatchItem('first-live.png');
+  const second = readyBatchItem('second-live.png');
+  const csvText = [
+    'filename,brandName,classType,abv,proof,netContents,producerAddress,isImported,countryOfOrigin',
+    'first-live.png,OLD TOM,Bourbon Whiskey,45%,90 Proof,750 mL,"Example, KY",false,',
+    'second-live.png,OLD TOM,Bourbon Whiskey,45%,90 Proof,750 mL,"Example, KY",false,',
+  ].join('\n');
+  const csv = new File([csvText], 'applications.csv', { type: 'text/csv' });
+  Object.defineProperty(csv, 'text', { configurable: true, value: async () => csvText });
+  vi.mocked(extractFromImage).mockImplementation((file) =>
+    file.name === first.name
+      ? Promise.resolve({
+          extraction: first.extraction!,
+          rawText: first.rawText!,
+          source: 'ocr',
+        })
+      : secondExtraction.promise,
+  );
+
+  render(<App />);
+  await user.click(screen.getByRole('button', { name: /review a batch/i }));
+  await user.upload(
+    screen.getByLabelText(/^choose label images$/i),
+    [first.file, second.file],
+  );
+  await user.upload(screen.getByLabelText(/^optional application CSV$/i), csv);
+  expect(await screen.findByText('Ready: applications.csv')).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: /begin batch review/i }));
+
+  await user.click(
+    await screen.findByRole('button', {
+      name: /open full review for first-live\.png/i,
+    }),
+  );
+  secondExtraction.resolve({
+    extraction: second.extraction!,
+    rawText: second.rawText!,
+    source: 'ocr',
+  });
+
+  await user.click(screen.getByRole('button', { name: /back to batch/i }));
+
+  expect(
+    await screen.findByRole('button', {
+      name: /open full review for second-live\.png/i,
+    }),
+  ).toBeInTheDocument();
+  expect(screen.getByText('2 of 2 processed')).toBeInTheDocument();
+  expect(extractFromImage).toHaveBeenCalledTimes(2);
 });
 
 it('requires the complete CSV application schema before a batch can begin', async () => {
