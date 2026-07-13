@@ -56,6 +56,30 @@ GOVERNMENT WARNING: ${CANONICAL_WARNING_BODY}`,
     });
   });
 
+  it('stops an address block before a malformed warning heading', () => {
+    const extraction = extractFromText(
+      'IMPORTED BY Harbor Imports\nGOVERNMENT WARNING. Keep out of reach of children.',
+      0.96,
+    );
+
+    expect(extraction.producerAddress).toMatchObject({
+      value: 'Harbor Imports',
+      rawText: 'IMPORTED BY Harbor Imports',
+    });
+  });
+
+  it('stops an address block before a warning body fragment', () => {
+    const extraction = extractFromText(
+      'IMPORTED BY Harbor Imports\n(1) According to the Surgeon General, women should not drink alcoholic beverages.',
+      0.96,
+    );
+
+    expect(extraction.producerAddress).toMatchObject({
+      value: 'Harbor Imports',
+      rawText: 'IMPORTED BY Harbor Imports',
+    });
+  });
+
   it('preserves captured address evidence while normalizing only its value', () => {
     const rawText = [
       '  IMPORTER: Harbor Imports  ',
@@ -70,19 +94,25 @@ GOVERNMENT WARNING: ${CANONICAL_WARNING_BODY}`,
     });
   });
 
-  it('uses the resolver against a candidate’s raw OCR evidence', () => {
+  it('uses terminal ABV punctuation as resolver evidence', () => {
     const extraction = extractFromText(
       '45% Alc./Vol.',
       createCandidateConfidenceResolver(
-        [{ text: '45%', confidence: 96 }, { text: 'Alc./Vol.', confidence: 62 }],
+        [
+          { text: '45%', confidence: 96 },
+          { text: 'Alc.', confidence: 96 },
+          { text: '/', confidence: 96 },
+          { text: 'Vol', confidence: 96 },
+          { text: '.', confidence: 14 },
+        ],
         [],
       ),
     );
 
     expect(extraction.abv).toMatchObject({
       value: '45%',
-      rawText: '45% Alc./Vol',
-      confidence: 0.62,
+      rawText: '45% Alc./Vol.',
+      confidence: 0.14,
     });
   });
 

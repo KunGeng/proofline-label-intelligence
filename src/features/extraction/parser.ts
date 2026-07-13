@@ -8,7 +8,7 @@ const normalizeWhitespace = (value: string): string => value.replace(/\s+/g, ' '
 const classTypePattern =
   /\b(?:bourbon|whiskey|whisky|vodka|gin|rum|tequila|brandy)\b/i;
 const abvPattern =
-  /\b(\d{1,2}(?:\.\d+)?\s*%)\s*(?:alc\.?\s*\/\s*vol\.?|abv|alcohol\s+by\s+volume)\b/i;
+  /\b(\d{1,2}(?:\.\d+)?\s*%)\s*(?:alc\.?\s*\/\s*vol\.?|abv|alcohol\s+by\s+volume)\b(?:[^\w\s]+)?/i;
 const proofPattern = /\(?\s*(\d{1,3}(?:\.\d+)?)\s*proof\s*\)?/i;
 const netContentsPattern =
   /\b(\d{1,4}(?:\.\d+)?\s*(?:mL|L|fl\.?\s*oz\.?))\b/i;
@@ -19,6 +19,8 @@ const producerOrImporterPattern =
 const countryOfOriginPattern =
   /\b(?:product\s+of|country\s+of\s+origin\s*:?|made\s+in|imported\s+from)\s+([A-Za-z][A-Za-z .’'\-]*?)(?=\r?\n|$)/i;
 const warningHeadingPattern = /\b(government\s+warning:)/i;
+const warningLinePattern = /\bgovernment\s+warning\b/i;
+const warningBodyFragmentPattern = /^\(\s*(?:1|2)\s*\)/;
 const warningBodyPattern = /\(\s*1\s*\)[\s\S]*?health\s+problems\s*\./i;
 const displayLinePattern = /^[A-Z][A-Z0-9 &'.,-]*$/;
 
@@ -51,7 +53,8 @@ const isMandatoryLine = (line: string): boolean =>
   netContentsPattern.test(line) ||
   producerOrImporterPattern.test(line) ||
   countryOfOriginPattern.test(line) ||
-  warningHeadingPattern.test(line);
+  warningLinePattern.test(line) ||
+  warningBodyFragmentPattern.test(line);
 
 const addressBlockFor = (rawText: string): string | undefined => {
   const lines = rawText.split(/\r?\n/);
