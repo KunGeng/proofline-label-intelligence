@@ -2,4 +2,5 @@ node_modules/
 dist/
 coverage/
 .pnpm-store/
+.worktrees/
 .DS_Store
