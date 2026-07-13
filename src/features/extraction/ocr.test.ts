@@ -130,6 +130,66 @@ describe('extractFromImage worker initialization', () => {
   });
 });
 
+describe('extractFromImage worker reuse', () => {
+  it('initializes a worker once, reuses it across extractions, and reports duration', async () => {
+    const readyWorker = {
+      recognize: vi.fn().mockResolvedValue({
+        data: { text: 'OLD TOM DISTILLERY', confidence: 99 },
+      }),
+      terminate: vi.fn().mockResolvedValue(undefined),
+    } as unknown as OcrWorker;
+    const workerFactoryMock = vi.fn().mockResolvedValue(readyWorker);
+    const extract = createExtractFromImage({
+      createWorker: workerFactoryMock as unknown as WorkerFactory,
+      prepareImage: preparedImage,
+    });
+
+    const firstResult = await extract(file(), vi.fn());
+    const secondResult = await extract(file(), vi.fn());
+
+    expect(firstResult.error).toBeUndefined();
+    expect(secondResult.error).toBeUndefined();
+    expect(firstResult.durationMs).toBeGreaterThanOrEqual(0);
+    expect(secondResult.durationMs).toBeGreaterThanOrEqual(0);
+    expect(workerFactoryMock).toHaveBeenCalledTimes(1);
+    expect(readyWorker.recognize).toHaveBeenCalledTimes(2);
+    expect(readyWorker.terminate).not.toHaveBeenCalled();
+  });
+
+  it('discards a worker after a recognition failure instead of reusing it', async () => {
+    const failingWorker = {
+      recognize: vi.fn().mockRejectedValue(new Error('recognition failed')),
+      terminate: vi.fn().mockResolvedValue(undefined),
+    } as unknown as OcrWorker;
+    const replacementWorker = {
+      recognize: vi.fn().mockResolvedValue({
+        data: { text: 'OLD TOM DISTILLERY', confidence: 99 },
+      }),
+      terminate: vi.fn().mockResolvedValue(undefined),
+    } as unknown as OcrWorker;
+    const workerFactoryMock = vi
+      .fn()
+      .mockResolvedValueOnce(failingWorker)
+      .mockResolvedValueOnce(replacementWorker);
+    const extract = createExtractFromImage({
+      createWorker: workerFactoryMock as unknown as WorkerFactory,
+      prepareImage: preparedImage,
+    });
+
+    const failedResult = await extract(file(), vi.fn());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(failedResult).toMatchObject({ error: 'unreadable', source: 'ocr' });
+    expect(failingWorker.terminate).toHaveBeenCalledTimes(1);
+
+    const recoveredResult = await extract(file(), vi.fn());
+
+    expect(recoveredResult.error).toBeUndefined();
+    expect(replacementWorker.recognize).toHaveBeenCalledTimes(1);
+    expect(workerFactoryMock).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('extractFromImage input validation', () => {
   it('returns the MIME validation error for an unsupported image type', async () => {
     const result = await extractFromImage(

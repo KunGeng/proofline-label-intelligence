@@ -45,9 +45,10 @@ const item = (overrides: Partial<QueueItem> = {}): QueueItem => ({
 });
 
 describe('serializeResults', () => {
-  it('uses the documented header order and reports field-state totals', () => {
+  it('uses the documented header order and reports field-state totals with findings', () => {
     expect(serializeResults([item()])).toBe(
-      'filename,status,overallState,matchCount,mismatchCount,needsReviewCount,unreadableCount,error\nexample.png,ready,needs_review,1,1,1,1,',
+      'filename,status,overallState,matchCount,mismatchCount,needsReviewCount,unreadableCount,findings,error\n' +
+        'example.png,ready,needs_review,1,1,1,1,warningText: mismatch; warningTypography: needs_review; countryOfOrigin: unreadable,',
     );
   });
 
@@ -62,7 +63,7 @@ describe('serializeResults', () => {
     ]);
 
     expect(result).toBe(
-      'filename,status,overallState,matchCount,mismatchCount,needsReviewCount,unreadableCount,error\n"Old, ""Tom""\nReserve.png",error,,,,,,"OCR said ""no"", retry."',
+      'filename,status,overallState,matchCount,mismatchCount,needsReviewCount,unreadableCount,findings,error\n"Old, ""Tom""\nReserve.png",error,,,,,,,"OCR said ""no"", retry."',
     );
   });
 
@@ -88,7 +89,7 @@ describe('serializeResults', () => {
 
   it('returns the header alone for an empty queue', () => {
     expect(serializeResults([])).toBe(
-      'filename,status,overallState,matchCount,mismatchCount,needsReviewCount,unreadableCount,error',
+      'filename,status,overallState,matchCount,mismatchCount,needsReviewCount,unreadableCount,findings,error',
     );
   });
 });

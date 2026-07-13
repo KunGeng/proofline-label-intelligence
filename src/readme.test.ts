@@ -11,13 +11,16 @@ describe('submission documentation', () => {
 
     for (const heading of [
       'What it does',
+      'Try it in 60 seconds',
       'Quick start',
       'Guided demo',
       'Batch CSV',
       'Architecture',
+      'Performance',
       'Validation behavior',
       'Privacy',
       'Limitations',
+      'Key trade-offs',
       'Testing',
       'Deployment',
       'Future Azure path',
@@ -33,13 +36,19 @@ describe('submission documentation', () => {
     expect(readme).toContain('https://github.com/KunGeng/proofline-label-intelligence');
   });
 
-  it('ships a safe, complete CSV intake template', async () => {
+  it('ships a usable CSV intake template that references the sample JPEG label', async () => {
     const template = await readFile('public/batch-template.csv', 'utf8');
 
     expect(template).toBe(
       'filename,brandName,classType,abv,proof,netContents,producerAddress,isImported,countryOfOrigin\n' +
-        'old-tom-bourbon.svg,OLD TOM DISTILLERY,Kentucky Straight Bourbon Whiskey,45%,90,750 mL,"Old Tom Distillery, Louisville, KY",false,\n',
+        'old-tom-bourbon.jpg,OLD TOM DISTILLERY,Kentucky Straight Bourbon Whiskey,45%,90,750 mL,"Old Tom Distillery, Louisville, KY",false,\n',
     );
+
+    const sampleLabel = await readFile('public/demo/old-tom-bourbon.jpg');
+    expect(sampleLabel.length).toBeGreaterThan(0);
+    // JPEG magic number: the referenced sample must be a real intake-accepted format.
+    expect(sampleLabel[0]).toBe(0xff);
+    expect(sampleLabel[1]).toBe(0xd8);
   });
 
   it('includes a local command for inspecting the production build', async () => {

@@ -34,6 +34,7 @@ import {
 } from './ui';
 
 const MAX_BATCH_FILES = 300;
+const BATCH_WORKER_COUNT = 2;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const ACCEPTED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
@@ -145,8 +146,22 @@ const candidateEntriesFor = (
 ): Array<[keyof LabelExtraction, Candidate]> =>
   Object.entries(extraction ?? {}) as Array<[keyof LabelExtraction, Candidate]>;
 
-const confidenceText = (confidence: number): string =>
-  `${Math.round(confidence * 100)}% confidence`;
+const confidenceText = (candidate: Candidate): string =>
+  candidate.source === 'agent'
+    ? 'Human-verified'
+    : `${Math.round(candidate.confidence * 100)}% confidence`;
+
+const formatSeconds = (milliseconds: number): string =>
+  `${(milliseconds / 1000).toFixed(1)} s`;
+
+const formatEstimate = (milliseconds: number): string => {
+  const seconds = Math.ceil(milliseconds / 1000);
+  if (seconds < 60) {
+    return `about ${seconds} s`;
+  }
+
+  return `about ${Math.ceil(seconds / 60)} min`;
+};
 
 function BatchEvidence({ item }: { item: QueueItem }) {
   const candidates = candidateEntriesFor(item.extraction);
@@ -162,6 +177,9 @@ function BatchEvidence({ item }: { item: QueueItem }) {
         <div>
           <p className="eyebrow">Label evidence</p>
           <h3>{item.name}</h3>
+          {item.durationMs !== undefined ? (
+            <p className="muted">Extracted locally in {formatSeconds(item.durationMs)}.</p>
+          ) : null}
         </div>
         {item.status === 'extracted_pending_application' ? (
           <span className="batch-status batch-status--triage">Application data required</span>
@@ -196,7 +214,7 @@ function BatchEvidence({ item }: { item: QueueItem }) {
                     <span className="table-value">{candidate.value}</span>
                     <div className="candidate-evidence__meta">
                       <SourceChip source={candidate.source} />
-                      <span>{confidenceText(candidate.confidence)}</span>
+                      <span>{confidenceText(candidate)}</span>
                     </div>
                     <p className="raw-evidence">
                       Raw OCR: {candidate.rawText || 'No raw OCR candidate was extracted.'}
@@ -438,7 +456,11 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
       : triageJobsFor(selectedFiles);
 
     retireActiveGeneration();
-    const queue = createReviewQueue(jobs, queueWorkerFromExtractor(extractFromImage), 2);
+    const queue = createReviewQueue(
+      jobs,
+      queueWorkerFromExtractor(extractFromImage),
+      BATCH_WORKER_COUNT,
+    );
     const generation: QueueGeneration = { queue, activeOperations: 0 };
     activeGenerationRef.current = generation;
     setItems([...queue.items]);
@@ -501,10 +523,24 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
   const errorCount = items.filter((item) => item.status === 'error').length;
   const hasQueue = items.length > 0;
   const hasBatchData = hasQueue || selectedFiles.length > 0 || csvPresent;
+  const measuredDurations = items
+    .map((item) => item.durationMs)
+    .filter((duration): duration is number => duration !== undefined);
+  const averageDurationMs = measuredDurations.length > 0
+    ? measuredDurations.reduce((total, duration) => total + duration, 0) /
+      measuredDurations.length
+    : undefined;
+  const remainingEstimate = isProcessing && averageDurationMs !== undefined
+    ? formatEstimate(
+        (averageDurationMs * (items.length - processedCount)) / BATCH_WORKER_COUNT,
+      )
+    : undefined;
   const batchProgressSummary = errorCount > 0
     ? `${errorCount} extraction error${errorCount === 1 ? '' : 's'} need${errorCount === 1 ? 's' : ''} attention.`
     : isProcessing
-      ? 'Two local workers are processing label evidence.'
+      ? averageDurationMs !== undefined
+        ? `Two local workers are processing label evidence — averaging ${formatSeconds(averageDurationMs)} per label, ${remainingEstimate} remaining.`
+        : 'Two local workers are processing label evidence.'
       : 'Two local workers maximum';
 
   return (
@@ -561,6 +597,9 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
             </p>
             <a className="batch-template-link" href="/batch-template.csv" download>
               Download starter CSV
+            </a>
+            <a className="batch-template-link" href="/demo/old-tom-bourbon.jpg" download>
+              Download sample label image
             </a>
             <p className="batch-csv-panel__schema">
               For validation, include{' '}
@@ -741,7 +780,6 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
                                   type="button"
                                   className="text-button"
                                   onClick={() => retry(item.id)}
-                                  disabled={isProcessing}
                                   aria-label={`Retry ${item.name}`}
                                 >
                                   Retry

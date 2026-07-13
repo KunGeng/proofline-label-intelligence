@@ -95,6 +95,26 @@ describe('createReviewQueue', () => {
     expect(report).toHaveBeenCalledWith(0.5, 'reading');
   });
 
+  it('records a measured extraction duration for processed items', async () => {
+    const reportedDuration = 1234;
+    const queue = createReviewQueue(
+      [
+        { id: 'reported', file: file('reported.png') },
+        { id: 'measured', file: file('measured.png') },
+      ],
+      async (job) =>
+        job.id === 'reported'
+          ? { ...successfulResult(), durationMs: reportedDuration }
+          : successfulResult(),
+      1,
+    );
+
+    await queue.start();
+
+    expect(queue.items[0]?.durationMs).toBe(reportedDuration);
+    expect(queue.items[1]?.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
   it('never starts more jobs than the concurrency cap', async () => {
     const { maxActive } = await exerciseQueue(2, 8);
 

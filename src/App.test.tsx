@@ -494,6 +494,54 @@ it('lets an agent add a missing imported-origin candidate without fabricating ra
   expect(originRow).toHaveTextContent('No raw OCR candidate was extracted.');
 });
 
+it('treats an agent correction of a low-confidence candidate as human-verified', async () => {
+  const user = userEvent.setup();
+  vi.mocked(extractFromImage).mockResolvedValueOnce({
+    extraction: {
+      abv: { value: '43%', rawText: '43% Alc./Vol.', confidence: 0.7, source: 'ocr' },
+    },
+    rawText: '43% Alc./Vol.',
+    source: 'ocr',
+  });
+
+  await startManualReview(user);
+
+  const abvRow = await screen.findByRole('row', { name: /alcohol by volume/i });
+  expect(abvRow).toHaveTextContent('Needs review');
+
+  await user.click(
+    screen.getByRole('button', { name: /correct alcohol by volume candidate/i }),
+  );
+  const correction = screen.getByRole('textbox', {
+    name: /alcohol by volume corrected candidate/i,
+  });
+  await user.clear(correction);
+  await user.type(correction, '45%');
+  await user.click(
+    screen.getByRole('button', { name: /save alcohol by volume correction/i }),
+  );
+
+  expect(abvRow).toHaveTextContent('Match');
+  expect(abvRow).toHaveTextContent('Human-verified');
+  expect(abvRow).toHaveTextContent(/raw OCR: 43% Alc\.\/Vol\./i);
+});
+
+it('reports the measured local extraction time for a real review', async () => {
+  const user = userEvent.setup();
+  vi.mocked(extractFromImage).mockResolvedValueOnce({
+    extraction: {},
+    rawText: 'OLD TOM',
+    source: 'ocr',
+    durationMs: 4321,
+  });
+
+  await startManualReview(user);
+
+  expect(
+    await screen.findByText('Local OCR finished in 4.3 s on this device.'),
+  ).toBeInTheDocument();
+});
+
 it('never renders an approval claim', async () => {
   render(<App />);
 
@@ -558,6 +606,45 @@ it('marks missing single-label requirements and focuses the first field after su
   expect(brand).toHaveAttribute('aria-invalid', 'true');
   expect(brand).toHaveFocus();
   expect(screen.getByText('Required fields are marked Required.')).toBeInTheDocument();
+});
+
+it('explains unsupported application number formats before extraction begins', async () => {
+  const user = userEvent.setup();
+  render(<App />);
+
+  await user.click(screen.getByRole('button', { name: /review a label/i }));
+  await user.type(screen.getByRole('textbox', { name: /^brand name$/i }), 'Old Tom');
+  await user.type(screen.getByRole('textbox', { name: /class\/type/i }), 'Bourbon Whiskey');
+  await user.type(
+    screen.getByRole('textbox', { name: /alcohol by volume/i }),
+    '45% Alc./Vol. (90 Proof)',
+  );
+  await user.type(screen.getByRole('textbox', { name: /net contents/i }), '750 mL');
+  await user.type(screen.getByRole('textbox', { name: /producer address/i }), 'Old Tom, KY');
+  await user.upload(
+    screen.getByLabelText(/^choose label image$/i),
+    new File(['label'], 'old-tom.png', { type: 'image/png' }),
+  );
+  await user.click(screen.getByRole('button', { name: /start evidence review/i }));
+
+  const abv = screen.getByRole('textbox', { name: /alcohol by volume/i });
+  expect(screen.getByRole('alert')).toHaveTextContent(
+    'Alcohol by volume must be a number or percentage, like 45%.',
+  );
+  expect(abv).toHaveAttribute('aria-invalid', 'true');
+  expect(abv).toHaveFocus();
+  expect(extractFromImage).not.toHaveBeenCalled();
+
+  await user.clear(abv);
+  await user.type(abv, '45%');
+  vi.mocked(extractFromImage).mockResolvedValueOnce({
+    extraction: {},
+    rawText: 'OLD TOM',
+    source: 'ocr',
+  });
+  await user.click(screen.getByRole('button', { name: /start evidence review/i }));
+
+  expect(await screen.findByRole('table')).toBeInTheDocument();
 });
 
 it('keeps the reviewer informed when OCR rejects unexpectedly', async () => {

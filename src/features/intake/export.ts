@@ -8,6 +8,7 @@ const RESULT_HEADERS = [
   'mismatchCount',
   'needsReviewCount',
   'unreadableCount',
+  'findings',
   'error',
 ] as const;
 
@@ -32,6 +33,12 @@ const countFieldStates = (item: QueueItem): ResultCounts =>
 const neutralizeFormula = (text: string): string =>
   /^[=+\-@]/.test(text) ? `'${text}` : text;
 
+const outstandingFindings = (item: QueueItem): string =>
+  item.result?.fields
+    .filter((field) => field.state !== 'match')
+    .map((field) => `${field.field}: ${field.state}`)
+    .join('; ') ?? '';
+
 const escapeCell = (value: string | number): string => {
   const text = neutralizeFormula(String(value));
 
@@ -49,6 +56,7 @@ export const serializeResults = (items: QueueItem[]): string => {
       item.result ? counts.mismatch : '',
       item.result ? counts.needs_review : '',
       item.result ? counts.unreadable : '',
+      outstandingFindings(item),
       item.error ?? '',
     ];
 

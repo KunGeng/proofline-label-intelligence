@@ -22,6 +22,7 @@ interface ActiveReview {
   disclosure?: string;
   error?: string;
   progress?: number;
+  durationMs?: number;
 }
 
 const asFixtureEvidence = (extraction: LabelExtraction): LabelExtraction => {
@@ -141,6 +142,7 @@ export function App({ initialBatchItems }: AppProps) {
               progress: undefined,
               phase: output.error ? 'error' : 'ready',
               error: output.error ? friendlyExtractionError(output.error) : undefined,
+              durationMs: output.error ? undefined : output.durationMs,
             }
           : current,
       );
@@ -175,7 +177,9 @@ export function App({ initialBatchItems }: AppProps) {
         extraction: {
           ...current.extraction,
           [field]: candidate
-            ? { ...candidate, value, source: 'agent' }
+            ? // A correction is a human-verified value: the OCR confidence no
+              // longer describes it, while the raw OCR text stays as evidence.
+              { ...candidate, value, source: 'agent', confidence: 1 }
             : { value, rawText: '', confidence: 1, source: 'agent' },
         },
       };
@@ -222,6 +226,7 @@ export function App({ initialBatchItems }: AppProps) {
           disclosure={review.disclosure}
           error={review.error}
           progress={review.progress}
+          durationMs={review.durationMs}
           isGuidedDemo={Boolean(review.isGuidedDemo)}
           warningTypographyConfirmed={warningTypographyConfirmed}
           onWarningTypographyConfirmed={setWarningTypographyConfirmed}

@@ -46,6 +46,7 @@ export interface QueueItem {
   source?: ExtractionJobResult['source'];
   thumbnailUrl?: string;
   error?: string;
+  durationMs?: number;
 }
 
 export type QueueWorker = (
@@ -166,6 +167,7 @@ const resetForRetry = (item: QueueItem): void => {
   item.source = undefined;
   item.thumbnailUrl = undefined;
   item.error = undefined;
+  item.durationMs = undefined;
 };
 
 const discardItem = (item: QueueItem): void => {
@@ -176,6 +178,7 @@ const discardItem = (item: QueueItem): void => {
   item.source = undefined;
   item.thumbnailUrl = undefined;
   item.error = undefined;
+  item.durationMs = undefined;
   item.progress = 0;
 };
 
@@ -252,6 +255,7 @@ export const createReviewQueue = (
         return;
       }
 
+      const startedAt = Date.now();
       const output = await worker(job, report);
       if (!isCurrent()) {
         releaseObjectUrl(output.thumbnailUrl);
@@ -262,6 +266,7 @@ export const createReviewQueue = (
       item.rawText = output.rawText;
       item.source = output.source;
       item.thumbnailUrl = output.thumbnailUrl;
+      item.durationMs = output.durationMs ?? Date.now() - startedAt;
 
       if (output.error) {
         item.status = 'error';

@@ -176,13 +176,29 @@ const terminateWorker = async (worker: OcrWorker): Promise<void> => {
   }
 };
 
+interface ListenerRef {
+  current?: ProgressListener;
+}
+
+interface PooledWorker {
+  worker: OcrWorker;
+  listenerRef: ListenerRef;
+  broken: boolean;
+}
+
+const now = (): number =>
+  typeof performance !== 'undefined' && typeof performance.now === 'function'
+    ? performance.now()
+    : Date.now();
+
 const initializeWorker = (
   createWorker: WorkerFactory,
-  onProgress: ProgressListener,
+  listenerRef: ListenerRef,
   initializationTimeoutMs: number,
-): Promise<OcrWorker> =>
+): Promise<PooledWorker> =>
   new Promise((resolve, reject) => {
     let settled = false;
+    let pooled: PooledWorker | undefined;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
     const rejectInitialization = (reason: unknown): void => {
@@ -215,7 +231,8 @@ const initializeWorker = (
         clearTimeout(timeoutId);
       }
 
-      resolve(worker);
+      pooled = { worker, listenerRef, broken: false };
+      resolve(pooled);
     };
 
     timeoutId = setTimeout(
@@ -230,8 +247,22 @@ const initializeWorker = (
         langPath: LOCAL_OCR_PATH,
         gzip: true,
         workerBlobURL: false,
-        logger: reportWorkerProgress(onProgress),
-        errorHandler: (reason) => rejectInitialization(reason),
+        logger: (message) => {
+          const listener = listenerRef.current;
+          if (listener) {
+            reportWorkerProgress(listener)(message);
+          }
+        },
+        errorHandler: (reason) => {
+          if (!settled) {
+            rejectInitialization(reason);
+            return;
+          }
+
+          if (pooled) {
+            pooled.broken = true;
+          }
+        },
       }).then(resolveInitialization, rejectInitialization);
     } catch (error) {
       rejectInitialization(error);
@@ -245,9 +276,13 @@ export const createExtractFromImage = (
   const imagePreparer = dependencies.prepareImage ?? prepareImage;
   const initializationTimeoutMs =
     dependencies.initializationTimeoutMs ?? WORKER_INITIALIZATION_TIMEOUT_MS;
+  // Initialized workers are reused across extractions: worker boot, WASM
+  // compilation, and language-data loading are paid once per slot, not per label.
+  const idleWorkers: PooledWorker[] = [];
 
   return async (file, onProgress) => {
-    let worker: OcrWorker | undefined;
+    const startedAt = now();
+    let pooled: PooledWorker | undefined;
     let thumbnailUrl: string | undefined;
     let workerSlotAcquired = false;
 
@@ -259,32 +294,48 @@ export const createExtractFromImage = (
 
       await acquireWorker();
       workerSlotAcquired = true;
-      worker = await initializeWorker(
-        createWorker,
-        onProgress,
-        initializationTimeoutMs,
-      );
+
+      pooled = idleWorkers.pop();
+      if (pooled) {
+        pooled.listenerRef.current = onProgress;
+      } else {
+        pooled = await initializeWorker(
+          createWorker,
+          { current: onProgress },
+          initializationTimeoutMs,
+        );
+      }
 
       onProgress({ phase: 'reading', value: 0 });
-      const result = await worker.recognize(prepared.image);
+      const result = await pooled.worker.recognize(prepared.image);
       const rawText = result.data.text;
       const confidence = clampProgress(result.data.confidence / 100);
 
       onProgress({ phase: 'validating', value: 1 });
+
+      pooled.listenerRef.current = undefined;
+      if (!pooled.broken && idleWorkers.length < MAX_CONCURRENT_WORKERS) {
+        idleWorkers.push(pooled);
+      } else {
+        void terminateWorker(pooled.worker);
+      }
+      pooled = undefined;
 
       return {
         extraction: extractFromText(rawText, confidence),
         rawText,
         thumbnailUrl,
         source: 'ocr',
+        durationMs: now() - startedAt,
       };
     } catch (error) {
       return error instanceof ImageInputError
         ? inputErrorResult(error, thumbnailUrl)
         : unreadableResult(thumbnailUrl);
     } finally {
-      if (worker) {
-        await terminateWorker(worker);
+      if (pooled) {
+        pooled.listenerRef.current = undefined;
+        void terminateWorker(pooled.worker);
       }
 
       if (workerSlotAcquired) {

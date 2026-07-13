@@ -31,6 +31,7 @@ interface ReviewDeskProps {
   disclosure?: string;
   error?: string;
   progress?: number;
+  durationMs?: number;
   isGuidedDemo: boolean;
   warningTypographyConfirmed: boolean;
   onWarningTypographyConfirmed: (confirmed: boolean) => void;
@@ -63,8 +64,13 @@ const decisionTitleFor = (state: ReviewState): string =>
 const taskTargetFor = (field: FieldKey): string =>
   field === 'warningTypography' ? '#typography-confirmation' : '#field-comparison';
 
-const confidenceText = (confidence: number): string =>
-  `${Math.round(confidence * 100)}% confidence`;
+const confidenceText = (candidate: Candidate): string =>
+  candidate.source === 'agent'
+    ? 'Human-verified'
+    : `${Math.round(candidate.confidence * 100)}% confidence`;
+
+const extractionTimeText = (durationMs: number): string =>
+  `Local OCR finished in ${(durationMs / 1000).toFixed(1)} s on this device.`;
 
 const correctionIdFor = (field: CandidateField): string => `correction-${field}`;
 const correctionErrorIdFor = (field: CandidateField): string =>
@@ -80,6 +86,7 @@ export function ReviewDesk({
   disclosure,
   error,
   progress,
+  durationMs,
   isGuidedDemo,
   warningTypographyConfirmed,
   onWarningTypographyConfirmed,
@@ -280,6 +287,9 @@ export function ReviewDesk({
           <p className="eyebrow">Comparison result</p>
           <h2>{decisionTitleFor(result.overallState)}</h2>
           <p>{summaryFor(result.overallState)}</p>
+          {durationMs !== undefined ? (
+            <p className="muted decision__timing">{extractionTimeText(durationMs)}</p>
+          ) : null}
         </div>
         <StatusBadge state={result.overallState} />
       </section>
@@ -417,7 +427,7 @@ export function ReviewDesk({
                               <span className="table-value">{candidate.value}</span>
                               <div className="candidate-evidence__meta">
                                 <SourceChip source={candidate.source} />
-                                <span>{confidenceText(candidate.confidence)}</span>
+                                <span>{confidenceText(candidate)}</span>
                               </div>
                               <p className="raw-evidence">
                                 Raw OCR: {candidate.rawText || 'No raw OCR candidate was extracted.'}

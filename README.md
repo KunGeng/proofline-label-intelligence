@@ -18,6 +18,18 @@ Proofline gives a reviewer one place to compare an application against a label i
 
 The prototype deliberately never calls a result “approved.” A clean comparison reads: **“No discrepancies detected — agent approval required.”**
 
+Design rationale and trade-off discussion live in [docs/DESIGN.md](docs/DESIGN.md).
+
+## Try it in 60 seconds
+
+On the [live prototype](https://proofline-label-intelligence.kungeng0803.chatgpt.site) (or a local build):
+
+1. Download the sample label: [public/demo/old-tom-bourbon.jpg](public/demo/old-tom-bourbon.jpg) — the app also links it from both intake screens.
+2. Choose **New review**, enter the facts printed on it (brand `OLD TOM DISTILLERY`, class/type `Kentucky Straight Bourbon Whiskey`, ABV `45%`, proof `90`, net contents `750 mL`, producer `Old Tom Distillery, Louisville, KY`), and attach the image.
+3. Run the review: live local OCR extracts the label, each field is compared, and the measured extraction time is displayed with the result.
+
+For batch: choose **Review a batch**, select the same sample image, and import the [starter CSV](public/batch-template.csv) — its one row matches the sample label by filename.
+
 ## Quick start
 
 Prerequisite: Node.js 20+ and pnpm 9+.
@@ -52,13 +64,11 @@ For a real label, choose **New review**, supply the declared application facts, 
 
 Batch review accepts up to **300 selected images** and processes them through no more than **two OCR workers** at a time. The optional CSV matches selected files by trimmed, case-insensitive basename. It does not upload the images.
 
-Download the safe starter file: [public/batch-template.csv](public/batch-template.csv).
-
-The included row is a schema illustration. Replace `old-tom-bourbon.svg` with the basename of a selected JPEG, PNG, or WebP before import; the guided-demo SVG is not an accepted production intake file.
+Download the starter file: [public/batch-template.csv](public/batch-template.csv). Its one row matches the downloadable [sample label image](public/demo/old-tom-bourbon.jpg) by filename, so the template works as-is: select `old-tom-bourbon.jpg`, import the template, and begin the batch. Replace or extend the rows with your own image basenames for real work.
 
 ```csv
 filename,brandName,classType,abv,proof,netContents,producerAddress,isImported,countryOfOrigin
-old-tom-bourbon.svg,OLD TOM DISTILLERY,Kentucky Straight Bourbon Whiskey,45%,90,750 mL,"Old Tom Distillery, Louisville, KY",false,
+old-tom-bourbon.jpg,OLD TOM DISTILLERY,Kentucky Straight Bourbon Whiskey,45%,90,750 mL,"Old Tom Distillery, Louisville, KY",false,
 ```
 
 CSV behavior is intentionally strict:
@@ -68,6 +78,8 @@ CSV behavior is intentionally strict:
 - `isImported` must be `true` or `false`; imported rows require `countryOfOrigin`.
 - ABV, proof, and net contents must parse as supported numeric formats. A malformed or partial CSV is rejected rather than silently downgraded.
 - Duplicate selected filenames or duplicate CSV rows are flagged because a safe one-to-one match cannot be inferred. Selected files without a CSV row stay in OCR triage.
+
+Batch results export as a CSV with per-file status, field-state counts, and a `findings` column listing every non-match field, so a reviewer can sort a large batch by what actually needs attention.
 
 ## Architecture
 
@@ -83,11 +95,22 @@ flowchart LR
 
 This is a static React + TypeScript + Vite application. There is no application server.
 
-- **Evidence extraction:** `tesseract.js` loads its worker, WASM core, and English training data from same-origin files in `public/ocr/`. Images longer than 2,000 pixels are resized before OCR. The extraction path uses a global maximum of two active workers and times out failed worker initialization.
-- **Evidence model:** each parsed candidate carries the value, raw OCR text, confidence, and source. A reviewer correction changes only the candidate value/source; raw OCR is retained.
+- **Evidence extraction:** `tesseract.js` loads its worker, WASM core, and English training data from same-origin files in `public/ocr/`. Images longer than 2,000 pixels are resized before OCR. Initialized workers are kept warm and reused (two maximum), so worker boot, WASM compilation, and language-data loading are paid once — not once per label. Failed initialization times out; a worker that fails mid-recognition is discarded rather than reused.
+- **Evidence model:** each parsed candidate carries the value, raw OCR text, confidence, and source. A reviewer correction replaces the candidate value, marks it **Agent-entered**, and treats it as human-verified; the original raw OCR text remains displayed as evidence.
 - **Validation engine:** a pure, tested TypeScript module makes conservative comparisons. The UI consumes its field results rather than embedding compliance logic in components.
 - **Batch intake:** a strict CSV parser pairs CSV rows to selected image basenames, while a cancellation-aware queue owns the batch lifecycle and avoids stale worker results after a batch is cleared.
 - **Review experience:** accessible controls expose evidence, field-level reasons, status precedence, correction workflows, retry states, and a manual typography confirmation.
+
+## Performance
+
+The discovery interviews set a hard usability bar: **results in about five seconds, or agents go back to reviewing by eye**. How the prototype addresses it:
+
+- **Warm worker pool.** OCR workers are initialized once and reused across labels. The first label pays the one-time worker boot (WASM compile plus language-data load); subsequent labels pay only recognition.
+- **Bounded image size.** Labels are downscaled to a 2,000-pixel longest edge before recognition.
+- **Measured, not claimed.** The app displays the measured extraction time for every real review — on the single-label result and per row in a batch — and the batch progress line shows a running average with a remaining-time estimate. Speed on the evaluator's actual hardware is visible in the product rather than asserted in this README.
+- **Honest demo.** The guided demo is a precomputed fixture and is labeled as such; it does not present fixture speed as OCR speed.
+
+Local CPU recognition can still exceed the five-second bar for large, noisy, or stylized labels, especially on older hardware. That is a deliberate trade against the agency's blocked-egress network (see [Key trade-offs](#key-trade-offs)); the escalation path is image preprocessing, a faster local engine, or server-side OCR behind an approved endpoint in the [Azure evolution](#future-azure-path).
 
 ## Validation behavior
 
@@ -132,8 +155,17 @@ For a production deployment, review the hosting provider’s own request logging
 - **Scope:** U.S. distilled-spirit labels only. Beer, wine, ready-to-drink products, non-U.S. regimes, and broader advertising claims are out of scope.
 - **Evidence:** JPEG, PNG, and WebP only; PDFs, HEIC, and camera-live capture are not supported. Each file is capped at 10 MB and a selection is capped at 300 files.
 - **Physical-label checks:** OCR cannot prove printed type size, contrast, bold styling, package curvature, label attachment, or other physical-label requirements. An agent must verify the visual warning typography and any physical characteristics.
-- **OCR:** English OCR may misread stylized, curved, low-resolution, obstructed, or multilingual labels. Low-confidence and missing values remain review work, not silent defaults.
+- **OCR:** English OCR may misread stylized, curved, low-resolution, obstructed, or multilingual labels. Low-confidence and missing values remain review work, not silent defaults. No image preprocessing (contrast, deskew, thresholding) is applied yet beyond downscaling; that is the first accuracy lever for imperfect photos.
+- **Brand-name heuristic:** the parser proposes a brand candidate from prominent all-caps display lines. Lowercase or stylized wordmarks may not produce a candidate and fall to unreadable/review rather than a guess.
 - **Workflow:** there is no authentication, persistence, audit trail, role management, or automatic approval. A human reviewer must make any final compliance or COLA-related decision.
+
+## Key trade-offs
+
+- **Local OCR over a cloud vision model.** The agency network blocks outbound calls to ML endpoints — a prior vendor pilot failed partly on that. Browser-local OCR needs no credentials, sends no label data anywhere, and works behind the firewall; the accepted cost is lower accuracy on stylized or degraded labels, which the confidence thresholds route to human review instead of guessing. The `ExtractFromImage` seam is where an approved vision endpoint would plug in without touching validation or UI code.
+- **Speed is measured, not guaranteed.** The warm worker pool and image downscaling target the five-second expectation, and the UI reports real per-label timings — but local CPU recognition on older hardware can still run over for difficult labels. See [Performance](#performance).
+- **Distilled spirits only.** Beer and wine have different mandatory-information rules; a narrow, correct rule set was chosen over a broad, shallow one. The validation engine is a pure module, so additional beverage-type rule sets are additive.
+- **Strict CSV over forgiving CSV.** A malformed batch row is rejected with a line-numbered error rather than silently downgraded — in a compliance context, a silently skipped check is worse than a rejected import.
+- **No persistence.** Everything lives in the browser session. That is the right privacy posture for a prototype handling label artwork, and the wrong one for production — the [Azure path](#future-azure-path) covers what durable storage must add.
 
 ## Testing
 
@@ -141,11 +173,11 @@ Run the complete automated suite and production build locally:
 
 ```bash
 pnpm test:run
-pnpm lint
+pnpm typecheck
 pnpm build
 ```
 
-The suite covers deterministic validation and warning behavior, parser extraction, local OCR worker failure handling, CSV schemas and matching, queue cancellation/retry lifecycle, export safety, UI review states, and this README/template contract. `pnpm build` type-checks the application and emits the deployable static bundle in `dist/`.
+The suite covers deterministic validation and warning behavior, parser extraction, local OCR worker lifecycle (timeout, failure, warm reuse), CSV schemas and matching, queue cancellation/retry lifecycle, export safety, UI review states, and this README/template contract. `pnpm build` type-checks the application and emits the deployable static bundle in `dist/`. GitHub Actions runs typecheck, tests, and the build on every push.
 
 ## Deployment
 

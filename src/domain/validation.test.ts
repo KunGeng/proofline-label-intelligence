@@ -363,3 +363,27 @@ describe('validateLabel', () => {
     expect(result.overallState).toBe('unreadable');
   });
 });
+
+describe('numeric format attribution', () => {
+  it('routes an unparseable application value to manual review without blaming the label', () => {
+    const result = validateLabel(
+      fixture({}, undefined, { abv: '45% Alc./Vol. (90 Proof)' }),
+    );
+    const abv = byField(result, 'abv');
+
+    expect(abv.state).toBe('needs_review');
+    expect(abv.reason).toBe(
+      'The application value is not in a supported numeric format, so an agent must compare it manually.',
+    );
+  });
+
+  it('flags a high-confidence unparseable label value as a mismatch', () => {
+    const result = validateLabel(fixture({ abv: candidate('forty-five', 0.99) }));
+    const abv = byField(result, 'abv');
+
+    expect(abv.state).toBe('mismatch');
+    expect(abv.reason).toBe(
+      'High-confidence label value is not in the required numeric format.',
+    );
+  });
+});

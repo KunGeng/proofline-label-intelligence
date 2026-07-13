@@ -7,6 +7,7 @@ import {
   type FormEvent,
 } from 'react';
 import type { ApplicationData } from '../domain/types';
+import { parseAbv, parseMilliliters, parseProof } from '../domain/normalize';
 import { ScopeNotice, SectionCard } from './ui';
 
 const ACCEPTED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
@@ -21,7 +22,21 @@ const requiredApplicationFields = [
 ] as const;
 
 type RequiredApplicationFieldKey = (typeof requiredApplicationFields)[number][0];
-type RequiredFieldKey = RequiredApplicationFieldKey | 'countryOfOrigin' | 'labelImage';
+type RequiredFieldKey =
+  | RequiredApplicationFieldKey
+  | 'proof'
+  | 'countryOfOrigin'
+  | 'labelImage';
+
+// The same formats the CSV intake accepts, so both entry paths agree.
+const numericFormatChecks = [
+  ['abv', (value: string) => parseAbv(value) !== undefined,
+    'Alcohol by volume must be a number or percentage, like 45%.'],
+  ['proof', (value: string) => !value.trim() || parseProof(value) !== undefined,
+    'Proof must be a number, like 90.'],
+  ['netContents', (value: string) => parseMilliliters(value) !== undefined,
+    'Net contents must be an amount with a supported unit, like 750 mL.'],
+] as const;
 
 const emptyApplication: ApplicationData = {
   brandName: '',
@@ -56,6 +71,7 @@ export function IntakeForm({ onCancel, onSubmit }: IntakeFormProps) {
   const [file, setFile] = useState<File>();
   const [fileError, setFileError] = useState<string>();
   const [invalidFields, setInvalidFields] = useState<RequiredFieldKey[]>([]);
+  const [formatErrors, setFormatErrors] = useState<string[]>([]);
   const [focusRequest, setFocusRequest] = useState(0);
   const [dragging, setDragging] = useState(false);
   const fieldRefs = useRef<Partial<Record<RequiredFieldKey, HTMLInputElement | null>>>({});
@@ -64,13 +80,15 @@ export function IntakeForm({ onCancel, onSubmit }: IntakeFormProps) {
   const invalidRequiredFields = requiredApplicationFields.filter(([field]) =>
     invalidFields.includes(field),
   );
-  const formError = invalidRequiredFields.length > 0
-    ? `Complete the required application facts: ${invalidRequiredFields
-      .map(([, label]) => label)
-      .join(', ')}.`
-    : application.isImported && invalidFields.includes('countryOfOrigin')
-      ? 'Country of origin is required for an imported product.'
-      : undefined;
+  const formError = formatErrors.length > 0
+    ? formatErrors.join(' ')
+    : invalidRequiredFields.length > 0
+      ? `Complete the required application facts: ${invalidRequiredFields
+        .map(([, label]) => label)
+        .join(', ')}.`
+      : application.isImported && invalidFields.includes('countryOfOrigin')
+        ? 'Country of origin is required for an imported product.'
+        : undefined;
 
   useEffect(() => {
     if (!focusAfterSubmit.current || !firstInvalidField) {
@@ -92,6 +110,7 @@ export function IntakeForm({ onCancel, onSubmit }: IntakeFormProps) {
     setInvalidFields((current) =>
       current.filter((invalidField) => invalidField !== field),
     );
+    setFormatErrors([]);
   };
 
   const chooseFile = (candidate: File | undefined): void => {
@@ -125,7 +144,18 @@ export function IntakeForm({ onCancel, onSubmit }: IntakeFormProps) {
       .map(([field]) => field);
 
     if (missingFields.length > 0) {
+      setFormatErrors([]);
       reportInvalidFields(missingFields);
+      return;
+    }
+
+    const failedFormatChecks = numericFormatChecks.filter(
+      ([field, isValid]) => !isValid(application[field] ?? ''),
+    );
+
+    if (failedFormatChecks.length > 0) {
+      setFormatErrors(failedFormatChecks.map(([, , message]) => message));
+      reportInvalidFields(failedFormatChecks.map(([field]) => field));
       return;
     }
 
@@ -230,10 +260,17 @@ export function IntakeForm({ onCancel, onSubmit }: IntakeFormProps) {
             <label>
               <span className="field-label">Proof <span className="optional">Optional</span></span>
               <input
+                ref={(element) => {
+                  fieldRefs.current.proof = element;
+                }}
                 value={application.proof ?? ''}
                 onChange={(event) => updateField('proof', event.target.value)}
                 autoComplete="off"
                 placeholder="e.g. 90 Proof"
+                aria-invalid={invalidFields.includes('proof') || undefined}
+                aria-describedby={
+                  invalidFields.includes('proof') ? 'application-facts-error' : undefined
+                }
               />
             </label>
             <label>
@@ -351,6 +388,13 @@ export function IntakeForm({ onCancel, onSubmit }: IntakeFormProps) {
               />
             </label>
             {file ? <p className="selected-file">Ready: <strong>{file.name}</strong></p> : null}
+            <p className="muted">
+              No label handy?{' '}
+              <a href="/demo/old-tom-bourbon.jpg" download>
+                Download the Old Tom sample label
+              </a>{' '}
+              and use the facts printed on it.
+            </p>
           </div>
           {fileError ? <p className="inline-error" id="file-error" role="alert">{fileError}</p> : null}
         </SectionCard>

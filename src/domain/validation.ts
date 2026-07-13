@@ -150,14 +150,24 @@ const numericField = (
 
   const expectedNumber = parse(expected);
   const observedNumber = parse(candidateValue(candidate));
-  if (expectedNumber === undefined || observedNumber === undefined) {
+  if (expectedNumber === undefined) {
+    return withCandidate(
+      field,
+      'needs_review',
+      expected,
+      candidate,
+      'The application value is not in a supported numeric format, so an agent must compare it manually.',
+    );
+  }
+
+  if (observedNumber === undefined) {
     return withCandidate(
       field,
       state === 'match' ? 'mismatch' : 'needs_review',
       expected,
       candidate,
       state === 'match'
-        ? 'High-confidence value is not in the required numeric format.'
+        ? 'High-confidence label value is not in the required numeric format.'
         : 'Numeric format requires review because confidence is not high.',
     );
   }

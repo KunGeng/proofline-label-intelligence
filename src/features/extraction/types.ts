@@ -11,6 +11,7 @@ export interface ExtractionJobResult {
   thumbnailUrl?: string;
   error?: string;
   source: 'ocr' | 'fixture';
+  durationMs?: number;
 }
 
 export type ProgressListener = (event: ExtractionProgress) => void;
