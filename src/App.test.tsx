@@ -289,6 +289,21 @@ it('opens a ready batch row in full review without re-running OCR', async () => 
   expect(extractFromImage).not.toHaveBeenCalled();
 });
 
+it('moves keyboard focus to the full-review heading after opening a batch item', async () => {
+  const user = userEvent.setup();
+  render(<App initialBatchItems={[readyBatchItem()]} />);
+
+  const trigger = screen.getByRole('button', {
+    name: /open full review for ready\.png/i,
+  });
+  trigger.focus();
+  await user.keyboard('{Enter}');
+
+  expect(
+    await screen.findByRole('heading', { name: 'ready.png' }),
+  ).toHaveFocus();
+});
+
 it('returns focus to the full-review row action after going back to the batch', async () => {
   const user = userEvent.setup();
   render(<App initialBatchItems={[readyBatchItem()]} />);

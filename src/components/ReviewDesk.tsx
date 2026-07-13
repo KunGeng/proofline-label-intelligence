@@ -35,6 +35,7 @@ interface ReviewDeskProps {
   progress?: number;
   durationMs?: number;
   isGuidedDemo: boolean;
+  shouldFocusReviewHeading?: boolean;
   shouldFocusManualDisclosure: boolean;
   slowExtraction: boolean;
   stopAvailable: boolean;
@@ -102,6 +103,7 @@ export function ReviewDesk({
   progress,
   durationMs,
   isGuidedDemo,
+  shouldFocusReviewHeading,
   shouldFocusManualDisclosure,
   slowExtraction,
   stopAvailable,
@@ -120,6 +122,7 @@ export function ReviewDesk({
   const [correctionError, setCorrectionError] = useState<string>();
   const [restoreFocusField, setRestoreFocusField] = useState<CandidateField>();
   const correctionInputRef = useRef<HTMLInputElement>(null);
+  const reviewHeadingRef = useRef<HTMLHeadingElement>(null);
   const manualDisclosureRef = useRef<HTMLParagraphElement>(null);
   const correctionTriggerRefs = useRef<
     Partial<Record<CandidateField, HTMLButtonElement | null>>
@@ -145,6 +148,12 @@ export function ReviewDesk({
       setRestoreFocusField(undefined);
     }
   }, [editingField, restoreFocusField]);
+
+  useEffect(() => {
+    if (shouldFocusReviewHeading) {
+      reviewHeadingRef.current?.focus();
+    }
+  }, [shouldFocusReviewHeading]);
 
   useEffect(() => {
     if (shouldFocusManualDisclosure) {
@@ -250,7 +259,13 @@ export function ReviewDesk({
       <div className="review-desk__intro">
         <div>
           <p className="eyebrow">Single-label evidence review</p>
-          <h1 id="review-heading">{title}</h1>
+          <h1
+            ref={reviewHeadingRef}
+            id="review-heading"
+            tabIndex={shouldFocusReviewHeading ? -1 : undefined}
+          >
+            {title}
+          </h1>
           {disclosure ? (
             <p
               ref={shouldFocusManualDisclosure ? manualDisclosureRef : undefined}

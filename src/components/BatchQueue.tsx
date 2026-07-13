@@ -334,6 +334,7 @@ function BatchFullReview({
         imageUrl={imageUrl}
         durationMs={item.durationMs}
         isGuidedDemo={false}
+        shouldFocusReviewHeading
         shouldFocusManualDisclosure={false}
         slowExtraction={false}
         stopAvailable={false}
