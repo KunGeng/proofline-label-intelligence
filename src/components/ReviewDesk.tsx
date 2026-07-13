@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { fieldLabel } from '../domain/validation';
 import type {
   Candidate,
@@ -19,7 +19,9 @@ export type CandidateField = keyof LabelExtraction;
 export type ReviewDeskPhase = 'processing' | 'error' | 'ready';
 
 const isCandidateField = (field: FieldKey): field is CandidateField =>
-  field !== 'warningTypography' && field !== 'abvProofConsistency';
+  field !== 'warningTypography' &&
+  field !== 'warningLegibility' &&
+  field !== 'abvProofConsistency';
 
 interface ReviewDeskProps {
   title: string;
@@ -28,15 +30,26 @@ interface ReviewDeskProps {
   phase: ReviewDeskPhase;
   rawText: string;
   imageUrl?: string;
+  imageClassName?: string;
+  evidencePreview?: ReactNode;
   disclosure?: string;
   error?: string;
   progress?: number;
   durationMs?: number;
   isGuidedDemo: boolean;
+  shouldFocusReviewHeading?: boolean;
+  shouldFocusManualDisclosure: boolean;
+  slowExtraction: boolean;
+  stopAvailable: boolean;
+  onManualReview: () => void;
+  onStopOcr: () => void;
   warningTypographyConfirmed: boolean;
   onWarningTypographyConfirmed: (confirmed: boolean) => void;
+  warningLegibilityConfirmed: boolean;
+  onWarningLegibilityConfirmed: (confirmed: boolean) => void;
   onCorrectCandidate: (field: CandidateField, value: string) => void;
-  onStartAnother: () => void;
+  exitLabel?: string;
+  onExit: () => void;
 }
 
 const candidateFor = (
@@ -62,12 +75,29 @@ const decisionTitleFor = (state: ReviewState): string =>
   state === 'match' ? 'No discrepancies detected' : statusLabel(state);
 
 const taskTargetFor = (field: FieldKey): string =>
-  field === 'warningTypography' ? '#typography-confirmation' : '#field-comparison';
+  field === 'warningTypography'
+    ? '#typography-confirmation'
+    : field === 'warningLegibility'
+      ? '#legibility-confirmation'
+      : '#field-comparison';
 
 const confidenceText = (candidate: Candidate): string =>
   candidate.source === 'agent'
     ? 'Human-verified'
     : `${Math.round(candidate.confidence * 100)}% confidence`;
+
+const rawEvidenceLabel = (candidate: Candidate, isGuidedDemo: boolean): string => {
+  if (isGuidedDemo || candidate.source === 'fixture') {
+    return 'Fixture text';
+  }
+
+  return 'Raw OCR';
+};
+
+const emptyRawEvidenceText = (candidate: Candidate, isGuidedDemo: boolean): string =>
+  rawEvidenceLabel(candidate, isGuidedDemo) === 'Fixture text'
+    ? 'No fixture text was supplied for this candidate.'
+    : 'No raw OCR candidate was extracted.';
 
 const extractionTimeText = (durationMs: number): string =>
   `Local OCR finished in ${(durationMs / 1000).toFixed(1)} s on this device.`;
@@ -83,26 +113,42 @@ export function ReviewDesk({
   phase,
   rawText,
   imageUrl,
+  imageClassName,
+  evidencePreview,
   disclosure,
   error,
   progress,
   durationMs,
   isGuidedDemo,
+  shouldFocusReviewHeading,
+  shouldFocusManualDisclosure,
+  slowExtraction,
+  stopAvailable,
+  onManualReview,
+  onStopOcr,
   warningTypographyConfirmed,
   onWarningTypographyConfirmed,
+  warningLegibilityConfirmed,
+  onWarningLegibilityConfirmed,
   onCorrectCandidate,
-  onStartAnother,
+  exitLabel,
+  onExit,
 }: ReviewDeskProps) {
   const [editingField, setEditingField] = useState<CandidateField>();
   const [correction, setCorrection] = useState('');
   const [correctionError, setCorrectionError] = useState<string>();
   const [restoreFocusField, setRestoreFocusField] = useState<CandidateField>();
   const correctionInputRef = useRef<HTMLInputElement>(null);
+  const reviewHeadingRef = useRef<HTMLHeadingElement>(null);
+  const manualDisclosureRef = useRef<HTMLParagraphElement>(null);
   const correctionTriggerRefs = useRef<
     Partial<Record<CandidateField, HTMLButtonElement | null>>
   >({});
   const warningTypography = result?.fields.find(
     (field) => field.field === 'warningTypography',
+  );
+  const warningLegibility = result?.fields.find(
+    (field) => field.field === 'warningLegibility',
   );
   const outstandingFields = result?.fields.filter(
     (field) => field.state !== 'match',
@@ -119,6 +165,18 @@ export function ReviewDesk({
       setRestoreFocusField(undefined);
     }
   }, [editingField, restoreFocusField]);
+
+  useEffect(() => {
+    if (shouldFocusReviewHeading) {
+      reviewHeadingRef.current?.focus();
+    }
+  }, [shouldFocusReviewHeading]);
+
+  useEffect(() => {
+    if (shouldFocusManualDisclosure) {
+      manualDisclosureRef.current?.focus();
+    }
+  }, [shouldFocusManualDisclosure]);
 
   const openCandidateEntry = (
     field: CandidateField,
@@ -218,11 +276,25 @@ export function ReviewDesk({
       <div className="review-desk__intro">
         <div>
           <p className="eyebrow">Single-label evidence review</p>
-          <h1 id="review-heading">{title}</h1>
-          {disclosure ? <p className="disclosure">{disclosure}</p> : null}
+          <h1
+            ref={reviewHeadingRef}
+            id="review-heading"
+            tabIndex={shouldFocusReviewHeading ? -1 : undefined}
+          >
+            {title}
+          </h1>
+          {disclosure ? (
+            <p
+              ref={shouldFocusManualDisclosure ? manualDisclosureRef : undefined}
+              className="disclosure"
+              tabIndex={shouldFocusManualDisclosure ? -1 : undefined}
+            >
+              {disclosure}
+            </p>
+          ) : null}
         </div>
-        <button type="button" className="button button--secondary" onClick={onStartAnother}>
-          Review another label
+        <button type="button" className="button button--secondary" onClick={onExit}>
+          {exitLabel ?? 'Review another label'}
         </button>
       </div>
 
@@ -242,6 +314,22 @@ export function ReviewDesk({
             Proofline is reading this label locally. Findings and visual-confirmation
             controls will appear only after extraction finishes.
           </p>
+          {slowExtraction ? (
+            <aside className="slow-ocr-notice">
+              <strong>This is taking longer than expected.</strong>
+              <p>You can keep waiting or inspect the image and enter evidence manually.</p>
+              <div className="slow-ocr-notice__actions">
+                <button type="button" className="button button--secondary" onClick={onManualReview}>
+                  Review manually now
+                </button>
+                {stopAvailable ? (
+                  <button type="button" className="button button--secondary" onClick={onStopOcr}>
+                    Stop OCR and review manually
+                  </button>
+                ) : null}
+              </div>
+            </aside>
+          ) : null}
           {progressPercent !== undefined ? (
             <div
               className="processing-note"
@@ -273,7 +361,7 @@ export function ReviewDesk({
           <p>
             {error ?? 'Try a clearer image or begin a new evidence review.'}
           </p>
-          <button type="button" className="button button--secondary" onClick={onStartAnother}>
+          <button type="button" className="button button--secondary" onClick={onExit}>
             Choose another label
           </button>
         </section>
@@ -308,8 +396,8 @@ export function ReviewDesk({
         {isGuidedDemo ? (
           <ol>
             <li>
-              <a href="#raw-evidence">Inspect the raw OCR</a> to see the text this sample
-              preserves as evidence.
+              <a href="#raw-evidence">Inspect the fixture text</a> to see the text this sample
+              preserves as precomputed evidence.
             </li>
             <li>
               <a href="#field-comparison">Inspect the field comparison</a> to compare the
@@ -317,7 +405,7 @@ export function ReviewDesk({
             </li>
             <li>
               <a href="#typography-confirmation">Complete the visual typography check</a> on
-              the label image. OCR cannot make that confirmation.
+              the label preview. Text extraction cannot make that confirmation.
             </li>
           </ol>
         ) : outstandingFields.length ? (
@@ -344,13 +432,19 @@ export function ReviewDesk({
       <div className="review-desk__grid">
         <aside className="evidence-column" aria-label="Label evidence">
           <SectionCard title="Label evidence" eyebrow="What the label shows">
-            {imageUrl ? (
-              <figure className="label-preview">
-                <img src={imageUrl} alt={`Label preview: ${title}`} />
-                <figcaption>Evidence stays attached to this review for the current browser session.</figcaption>
-              </figure>
-            ) : (
-              <p className="muted">No preview is available for this label.</p>
+            {evidencePreview ?? (
+              imageUrl ? (
+                <figure className="label-preview">
+                  <img
+                    className={imageClassName}
+                    src={imageUrl}
+                    alt={`Label preview: ${title}`}
+                  />
+                  <figcaption>Evidence stays attached to this review for the current browser session.</figcaption>
+                </figure>
+              ) : (
+                <p className="muted">No preview is available for this label.</p>
+              )
             )}
             <details className="raw-text" id="raw-evidence">
               <summary>View complete extracted text</summary>
@@ -358,8 +452,8 @@ export function ReviewDesk({
             </details>
           </SectionCard>
 
-          <div id="typography-confirmation">
-            <SectionCard title="Required visual confirmation" eyebrow="Agent check">
+          <SectionCard title="Required visual confirmation" eyebrow="Agent check">
+            <div id="typography-confirmation">
               <p className="section-copy">
                 OCR can read the wording, but it cannot verify the warning heading’s presentation.
               </p>
@@ -377,8 +471,27 @@ export function ReviewDesk({
                   <p>{warningTypography.reason}</p>
                 </div>
               ) : null}
-            </SectionCard>
-          </div>
+            </div>
+            <div className="warning-legibility-confirmation" id="legibility-confirmation">
+              <label className="checkbox-field checkbox-field--confirmation">
+                <input
+                  type="checkbox"
+                  checked={warningLegibilityConfirmed}
+                  onChange={(event) => onWarningLegibilityConfirmed(event.target.checked)}
+                />
+                <span>
+                  I reviewed warning legibility, contrast, and placement. Exact printed type size still
+                  needs final regulatory review.
+                </span>
+              </label>
+              {warningLegibility ? (
+                <div className="confirmation-status">
+                  <StatusBadge state={warningLegibility.state} />
+                  <p>{warningLegibility.reason}</p>
+                </div>
+              ) : null}
+            </div>
+          </SectionCard>
         </aside>
 
         <div id="field-comparison">
@@ -430,7 +543,8 @@ export function ReviewDesk({
                                 <span>{confidenceText(candidate)}</span>
                               </div>
                               <p className="raw-evidence">
-                                Raw OCR: {candidate.rawText || 'No raw OCR candidate was extracted.'}
+                                {rawEvidenceLabel(candidate, isGuidedDemo)}:{' '}
+                                {candidate.rawText || emptyRawEvidenceText(candidate, isGuidedDemo)}
                               </p>
                               {candidateField ? (
                                 <>

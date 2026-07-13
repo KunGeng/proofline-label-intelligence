@@ -1,11 +1,18 @@
 import type { QueueItem } from './queue';
 import { downloadCsv, serializeResults } from './export';
 
-const item = (overrides: Partial<QueueItem> = {}): QueueItem => ({
+const item = ({
+  reviewFlags = {
+    warningTypographyConfirmed: false,
+    warningLegibilityConfirmed: false,
+  },
+  ...overrides
+}: Partial<QueueItem> = {}): QueueItem => ({
   id: 'example',
   file: new File(['label'], 'example.png', { type: 'image/png' }),
   name: 'example.png',
   size: 5,
+  reviewFlags,
   status: 'ready',
   progress: 1,
   result: {

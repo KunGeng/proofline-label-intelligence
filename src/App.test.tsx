@@ -1,19 +1,30 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { StrictMode } from 'react';
 import { App } from './App';
 import { CANONICAL_WARNING_BODY, CANONICAL_WARNING_HEADING } from './domain/constants';
-import type { Candidate } from './domain/types';
-import { extractFromImage } from './features/extraction/ocr';
+import { validateLabel } from './domain/validation';
+import type { ApplicationData, Candidate, LabelExtraction, ReviewFlags } from './domain/types';
+import { extractFromImage, prewarmOcr } from './features/extraction/ocr';
 import type { ExtractionJobResult } from './features/extraction/types';
 import { serializeResults } from './features/intake/export';
 import type { QueueItem } from './features/intake/queue';
 
 vi.mock('./features/extraction/ocr', () => ({
   extractFromImage: vi.fn(),
+  prewarmOcr: vi.fn(),
 }));
+
+beforeEach(() => {
+  vi.mocked(prewarmOcr).mockResolvedValue(undefined);
+});
 
 afterEach(() => {
   vi.mocked(extractFromImage).mockReset();
+  vi.mocked(prewarmOcr).mockReset();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 interface Deferred<T> {
@@ -30,7 +41,9 @@ const deferred = <T,>(): Deferred<T> => {
   return { promise, resolve };
 };
 
-const startManualReview = async (user: ReturnType<typeof userEvent.setup>): Promise<void> => {
+const fillManualReviewForm = async (
+  user: ReturnType<typeof userEvent.setup>,
+): Promise<HTMLElement> => {
   render(<App />);
   await user.click(screen.getByRole('button', { name: /review a label/i }));
   await user.type(screen.getByRole('textbox', { name: /^brand name$/i }), 'Old Tom');
@@ -42,8 +55,25 @@ const startManualReview = async (user: ReturnType<typeof userEvent.setup>): Prom
     screen.getByLabelText(/^choose label image$/i),
     new File(['label'], 'old-tom.png', { type: 'image/png' }),
   );
-  await user.click(screen.getByRole('button', { name: /start evidence review/i }));
+  return screen.getByRole('button', { name: /start evidence review/i });
 };
+
+const startManualReview = async (user: ReturnType<typeof userEvent.setup>): Promise<void> => {
+  await user.click(await fillManualReviewForm(user));
+};
+
+const startPendingManualReview = async (
+  user: ReturnType<typeof userEvent.setup>,
+): Promise<void> => {
+  const submit = await fillManualReviewForm(user);
+  vi.useFakeTimers();
+  fireEvent.click(submit);
+};
+
+const emptyReviewFlags = (): ReviewFlags => ({
+  warningTypographyConfirmed: false,
+  warningLegibilityConfirmed: false,
+});
 
 const batchFixture: QueueItem[] = [
   {
@@ -53,6 +83,7 @@ const batchFixture: QueueItem[] = [
     size: 5,
     status: 'ready',
     progress: 1,
+    reviewFlags: emptyReviewFlags(),
     result: {
       overallState: 'mismatch',
       fields: [
@@ -76,16 +107,59 @@ const batchErrorFixture: QueueItem[] = [
     size: 5,
     status: 'error',
     progress: 1,
+    reviewFlags: emptyReviewFlags(),
     error: 'Temporary OCR failure',
   },
 ];
 
-const ocrCandidate = (value: string): Candidate => ({
+const ocrCandidate = (value: string, rawText = value): Candidate => ({
   value,
-  rawText: value,
+  rawText,
   confidence: 0.99,
   source: 'ocr',
 });
+
+const batchApplication: ApplicationData = {
+  brandName: 'OLD TOM',
+  classType: 'Bourbon Whiskey',
+  abv: '45%',
+  proof: '90 Proof',
+  netContents: '750 mL',
+  producerAddress: 'Example, KY',
+  isImported: false,
+};
+
+const matchingBatchExtraction = (): LabelExtraction => ({
+  brandName: ocrCandidate('OLD TOM', 'OLD TOM FROM OCR'),
+  classType: ocrCandidate('Bourbon Whiskey'),
+  abv: ocrCandidate('45%'),
+  proof: ocrCandidate('90 Proof'),
+  netContents: ocrCandidate('750 mL'),
+  producerAddress: ocrCandidate('Example, KY'),
+  warningText: ocrCandidate(CANONICAL_WARNING_BODY),
+  warningHeading: ocrCandidate(CANONICAL_WARNING_HEADING),
+});
+
+const readyBatchItem = (name = 'ready.png'): QueueItem => {
+  const application = { ...batchApplication };
+  const extraction = matchingBatchExtraction();
+  const reviewFlags = emptyReviewFlags();
+
+  return {
+    id: name,
+    file: new File(['label'], name, { type: 'image/png' }),
+    name,
+    size: 5,
+    application,
+    reviewFlags,
+    status: 'ready',
+    progress: 1,
+    extraction,
+    rawText: 'OLD TOM FROM OCR',
+    source: 'ocr',
+    result: validateLabel({ application, extraction, flags: reviewFlags }),
+  };
+};
 
 it('offers a guided demo and a label-review entry point', () => {
   render(<App />);
@@ -99,6 +173,90 @@ it('offers a guided demo and a label-review entry point', () => {
   expect(
     screen.getByRole('button', { name: /review a label/i }),
   ).toBeInTheDocument();
+});
+
+it('opens an explicit foreign-origin scenario with fixture evidence and a review finding', async () => {
+  const user = userEvent.setup();
+  render(<App />);
+
+  await user.click(screen.getByRole('button', { name: /explore scenarios/i }));
+  expect(screen.getByRole('button', { name: /clear candidates, visual checks remain/i }))
+    .toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /declared-brand conflict/i }))
+    .toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /domestic declaration, foreign origin/i }))
+    .toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /title-case warning heading/i }))
+    .toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /low-confidence evidence/i }))
+    .toBeInTheDocument();
+  const foreignOrigin = screen.getByRole('button', {
+    name: /domestic declaration, foreign origin/i,
+  });
+  foreignOrigin.focus();
+  await user.keyboard('{Enter}');
+
+  expect(
+    screen.getByText(/precomputed illustrative fixture — not a live OCR timing result/i),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole('figure', { name: /illustrative label fixture/i }),
+  ).toHaveTextContent('Product of Scotland');
+  expect(
+    screen.getByRole('row', { name: /country of origin/i }),
+  ).toHaveTextContent('Needs review');
+  expect(screen.getByText(/fixture text: product of scotland/i)).toBeInTheDocument();
+  expect(screen.queryByText(/raw OCR: product of scotland/i)).not.toBeInTheDocument();
+  expect(screen.getByRole('heading', {
+    name: /domestic declaration \/ foreign-origin evidence/i,
+  })).toHaveFocus();
+});
+
+it('opens the declared-brand conflict with a visible mismatch', async () => {
+  const user = userEvent.setup();
+  render(<App />);
+
+  await user.click(screen.getByRole('button', { name: /explore scenarios/i }));
+  await user.click(screen.getByRole('button', { name: /declared-brand conflict/i }));
+
+  expect(
+    screen.getByText(/application brand intentionally conflicts with visible label evidence/i),
+  ).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: /^mismatch$/i })).toBeInTheDocument();
+  expect(screen.getByRole('row', { name: /brand name/i })).toHaveTextContent('Mismatch');
+});
+
+it('opens the title-case warning fixture with the shown warning-heading mismatch', async () => {
+  const user = userEvent.setup();
+  render(<App />);
+
+  await user.click(screen.getByRole('button', { name: /explore scenarios/i }));
+  await user.click(screen.getByRole('button', { name: /title-case warning heading/i }));
+
+  const fixture = screen.getByRole('figure', { name: /illustrative label fixture/i });
+  expect(fixture).toHaveTextContent('Produced by North Coast Spirits, Portland, OR');
+  expect(within(fixture).getByText('Government Warning:')).toBeInTheDocument();
+  expect(screen.getByRole('row', { name: /warning heading/i })).toHaveTextContent('Mismatch');
+});
+
+it('shows degraded Old Tom evidence as a low-confidence fixture without live OCR', async () => {
+  const user = userEvent.setup();
+  render(<App />);
+
+  await user.click(screen.getByRole('button', { name: /explore scenarios/i }));
+  await user.click(screen.getByRole('button', { name: /low-confidence evidence/i }));
+
+  expect(
+    screen.getByText(/precomputed low-confidence fixture shown with a visual degradation treatment/i),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole('img', {
+      name: /label preview: old tom distillery \/ degraded evidence/i,
+    }),
+  ).toHaveClass('label-preview__image--degraded');
+  expect(screen.getByRole('row', { name: /brand name/i })).toHaveTextContent('55% confidence');
+  expect(screen.getByRole('heading', { name: /^unreadable$/i })).toBeInTheDocument();
+  expect(extractFromImage).not.toHaveBeenCalled();
 });
 
 it('offers a starter CSV and exact validation schema in batch intake', async () => {
@@ -150,6 +308,7 @@ it('labels extraction-only batch rows as requiring application data', () => {
       size: 5,
       status: 'extracted_pending_application',
       progress: 1,
+      reviewFlags: emptyReviewFlags(),
     },
   ];
 
@@ -157,6 +316,9 @@ it('labels extraction-only batch rows as requiring application data', () => {
 
   expect(screen.getByText('Application data required')).toBeInTheDocument();
   expect(screen.queryByText(/^Match$/)).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole('button', { name: /open full review for triage\.png/i }),
+  ).not.toBeInTheDocument();
 });
 
 it('renders extracted evidence for a filename-only triage row after its detail control opens', async () => {
@@ -169,6 +331,7 @@ it('renders extracted evidence for a filename-only triage row after its detail c
       size: 5,
       status: 'extracted_pending_application',
       progress: 1,
+      reviewFlags: emptyReviewFlags(),
       thumbnailUrl: 'blob:triage-evidence-preview',
       rawText: 'OLD TOM\n45% Alc./Vol.',
       extraction: {
@@ -196,6 +359,216 @@ it('renders extracted evidence for a filename-only triage row after its detail c
   expect(detail).toHaveTextContent('Raw OCR');
   expect(detail).toHaveTextContent('45% Alc./Vol.');
   expect(screen.getByRole('img', { name: /label preview: triage-evidence\.png/i })).toBeInTheDocument();
+});
+
+it('opens a ready batch row in full review without re-running OCR', async () => {
+  const user = userEvent.setup();
+  render(<App initialBatchItems={[readyBatchItem()]} />);
+
+  await user.click(
+    screen.getByRole('button', { name: /open full review for ready\.png/i }),
+  );
+
+  expect(screen.getByRole('button', { name: /back to batch/i })).toBeInTheDocument();
+  expect(extractFromImage).not.toHaveBeenCalled();
+});
+
+it('moves keyboard focus to the full-review heading after opening a batch item', async () => {
+  const user = userEvent.setup();
+  render(<App initialBatchItems={[readyBatchItem()]} />);
+
+  const trigger = screen.getByRole('button', {
+    name: /open full review for ready\.png/i,
+  });
+  trigger.focus();
+  await user.keyboard('{Enter}');
+
+  expect(
+    await screen.findByRole('heading', { name: 'ready.png' }),
+  ).toHaveFocus();
+});
+
+it('returns focus to the full-review row action after going back to the batch', async () => {
+  const user = userEvent.setup();
+  render(<App initialBatchItems={[readyBatchItem()]} />);
+
+  const trigger = screen.getByRole('button', {
+    name: /open full review for ready\.png/i,
+  });
+  await user.click(trigger);
+  await user.click(screen.getByRole('button', { name: /back to batch/i }));
+
+  await waitFor(() => {
+    expect(
+      screen.getByRole('button', { name: /open full review for ready\.png/i }),
+    ).toHaveFocus();
+  });
+});
+
+it('releases the full-review object URL when returning to the batch', async () => {
+  const user = userEvent.setup();
+  const item = readyBatchItem();
+  const originalCreate = URL.createObjectURL;
+  const originalRevoke = URL.revokeObjectURL;
+  const create = vi.fn(() => 'blob:batch-full-review');
+  const revoke = vi.fn();
+  Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: create });
+  Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revoke });
+
+  try {
+    render(<App initialBatchItems={[item]} />);
+
+    await user.click(
+      screen.getByRole('button', { name: /open full review for ready\.png/i }),
+    );
+
+    expect(create).toHaveBeenCalledWith(item.file);
+    await user.click(screen.getByRole('button', { name: /back to batch/i }));
+
+    await waitFor(() => {
+      expect(revoke).toHaveBeenCalledWith('blob:batch-full-review');
+    });
+  } finally {
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: originalCreate,
+    });
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: originalRevoke,
+    });
+  }
+});
+
+it('revalidates each batch visual confirmation and preserves the queue filter and search after returning', async () => {
+  const user = userEvent.setup();
+  render(<App initialBatchItems={[readyBatchItem()]} />);
+
+  await user.selectOptions(screen.getByLabelText(/^show$/i), 'needs_review');
+  const search = screen.getByRole('searchbox', { name: /search filename/i });
+  await user.type(search, 'ready');
+  await user.click(
+    screen.getByRole('button', { name: /open full review for ready\.png/i }),
+  );
+
+  await user.click(
+    screen.getByRole('checkbox', {
+      name: /i visually confirmed the warning heading is uppercase and bold/i,
+    }),
+  );
+  await user.click(screen.getByRole('button', { name: /back to batch/i }));
+
+  expect(screen.getByLabelText(/^show$/i)).toHaveValue('needs_review');
+  expect(screen.getByRole('searchbox', { name: /search filename/i })).toHaveValue('ready');
+  const row = screen.getByRole('row', { name: /ready\.png/i });
+  expect(within(row).getAllByRole('cell')[3]).toHaveTextContent('1');
+
+  await user.click(
+    screen.getByRole('button', { name: /open full review for ready\.png/i }),
+  );
+  await user.click(
+    screen.getByRole('checkbox', {
+      name: /i reviewed warning legibility, contrast, and placement/i,
+    }),
+  );
+  await user.click(screen.getByRole('button', { name: /back to batch/i }));
+
+  expect(screen.getByLabelText(/^show$/i)).toHaveValue('needs_review');
+  expect(screen.getByRole('searchbox', { name: /search filename/i })).toHaveValue('ready');
+  expect(screen.getByText(/no matching labels/i)).toBeInTheDocument();
+  expect(screen.getByLabelText(/^show$/i)).toHaveFocus();
+  await user.selectOptions(screen.getByLabelText(/^show$/i), 'match');
+  expect(screen.getByRole('row', { name: /ready\.png/i })).toHaveTextContent('Match');
+  expect(extractFromImage).not.toHaveBeenCalled();
+});
+
+it('keeps raw OCR evidence when a batch correction becomes agent-entered', async () => {
+  const user = userEvent.setup();
+  const item = readyBatchItem();
+  render(<App initialBatchItems={[item]} />);
+
+  await user.click(
+    screen.getByRole('button', { name: /open full review for ready\.png/i }),
+  );
+  await user.click(
+    screen.getByRole('button', { name: /correct brand name candidate/i }),
+  );
+  const correction = screen.getByRole('textbox', {
+    name: /brand name corrected candidate/i,
+  });
+  await user.clear(correction);
+  await user.type(correction, 'OLD TOM RESERVE');
+  await user.click(
+    screen.getByRole('button', { name: /save brand name correction/i }),
+  );
+
+  const brandRow = screen.getByRole('row', { name: /brand name/i });
+  expect(brandRow).toHaveTextContent('Agent-entered');
+  expect(brandRow).toHaveTextContent('Human-verified');
+  expect(brandRow).toHaveTextContent('Raw OCR: OLD TOM FROM OCR');
+  expect(item.extraction?.brandName).toMatchObject({
+    value: 'OLD TOM RESERVE',
+    rawText: 'OLD TOM FROM OCR',
+    confidence: 1,
+    source: 'agent',
+  });
+
+  await user.click(screen.getByRole('button', { name: /back to batch/i }));
+  expect(screen.getByRole('row', { name: /ready\.png/i })).toHaveTextContent('Mismatch');
+});
+
+it('keeps active batch work running while a ready item is in full review', async () => {
+  const user = userEvent.setup();
+  const secondExtraction = deferred<ExtractionJobResult>();
+  const first = readyBatchItem('first-live.png');
+  const second = readyBatchItem('second-live.png');
+  const csvText = [
+    'filename,brandName,classType,abv,proof,netContents,producerAddress,isImported,countryOfOrigin',
+    'first-live.png,OLD TOM,Bourbon Whiskey,45%,90 Proof,750 mL,"Example, KY",false,',
+    'second-live.png,OLD TOM,Bourbon Whiskey,45%,90 Proof,750 mL,"Example, KY",false,',
+  ].join('\n');
+  const csv = new File([csvText], 'applications.csv', { type: 'text/csv' });
+  Object.defineProperty(csv, 'text', { configurable: true, value: async () => csvText });
+  vi.mocked(extractFromImage).mockImplementation((file) =>
+    file.name === first.name
+      ? Promise.resolve({
+          extraction: first.extraction!,
+          rawText: first.rawText!,
+          source: 'ocr',
+        })
+      : secondExtraction.promise,
+  );
+
+  render(<App />);
+  await user.click(screen.getByRole('button', { name: /review a batch/i }));
+  await user.upload(
+    screen.getByLabelText(/^choose label images$/i),
+    [first.file, second.file],
+  );
+  await user.upload(screen.getByLabelText(/^optional application CSV$/i), csv);
+  expect(await screen.findByText('Ready: applications.csv')).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: /begin batch review/i }));
+
+  await user.click(
+    await screen.findByRole('button', {
+      name: /open full review for first-live\.png/i,
+    }),
+  );
+  secondExtraction.resolve({
+    extraction: second.extraction!,
+    rawText: second.rawText!,
+    source: 'ocr',
+  });
+
+  await user.click(screen.getByRole('button', { name: /back to batch/i }));
+
+  expect(
+    await screen.findByRole('button', {
+      name: /open full review for second-live\.png/i,
+    }),
+  ).toBeInTheDocument();
+  expect(screen.getByText('2 of 2 processed')).toBeInTheDocument();
+  expect(extractFromImage).toHaveBeenCalledTimes(2);
 });
 
 it('requires the complete CSV application schema before a batch can begin', async () => {
@@ -368,7 +741,7 @@ it('orients the fixture-backed demo around the next three review actions', async
   expect(
     screen.getByRole('heading', { name: /a quick way through this sample/i }),
   ).toBeInTheDocument();
-  expect(screen.getByRole('link', { name: /inspect the raw ocr/i })).toHaveAttribute(
+  expect(screen.getByRole('link', { name: /inspect the fixture text/i })).toHaveAttribute(
     'href',
     '#raw-evidence',
   );
@@ -380,7 +753,7 @@ it('orients the fixture-backed demo around the next three review actions', async
     screen.getByRole('link', { name: /complete the visual typography check/i }),
   ).toHaveAttribute('href', '#typography-confirmation');
   expect(
-    screen.getByText(/precomputed sample — not a live OCR timing result/i),
+    screen.getByText(/precomputed fixture — not a live OCR timing result/i),
   ).toBeInTheDocument();
   expect(
     screen.getByRole('checkbox', {
@@ -395,10 +768,10 @@ it('orients the fixture-backed demo around the next three review actions', async
   );
 
   expect(
-    screen.getByText('No discrepancies detected — agent approval required.'),
+    screen.getByText('Evidence is available, but an agent review is still required.'),
   ).toBeInTheDocument();
   expect(
-    screen.getByRole('heading', { name: /no discrepancies detected/i }),
+    screen.getByRole('heading', { name: /needs review/i }),
   ).toBeInTheDocument();
 });
 
@@ -420,7 +793,372 @@ it('labels a manual review with next reviewer actions', async () => {
   ).not.toBeInTheDocument();
 });
 
-it('preserves raw OCR evidence when an agent corrects an extracted candidate', async () => {
+it('offers manual review after five seconds and ignores a late OCR result', async () => {
+  const user = userEvent.setup();
+  const result = deferred<ExtractionJobResult>();
+  vi.stubGlobal('URL', {
+    createObjectURL: vi.fn().mockReturnValue('blob:old-tom'),
+    revokeObjectURL: vi.fn(),
+  });
+  vi.mocked(extractFromImage).mockReturnValueOnce(result.promise);
+
+  await startPendingManualReview(user);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(5_000);
+  });
+
+  expect(screen.getByText(/this is taking longer than expected/i)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: /review manually now/i }));
+  expect(screen.getByText(/manual evidence mode/i)).toBeInTheDocument();
+
+  await act(async () => {
+    result.resolve({
+      extraction: {},
+      rawText: 'OLD TOM',
+      source: 'ocr',
+      durationMs: 4_321,
+    });
+    await Promise.resolve();
+  });
+
+  expect(screen.queryByText(/local OCR finished/i)).not.toBeInTheDocument();
+  expect(screen.getByRole('img', { name: /label preview: old-tom\.png/i })).toHaveAttribute(
+    'src',
+    'blob:old-tom',
+  );
+});
+
+it('moves focus to the manual-evidence disclosure after recovery', async () => {
+  const user = userEvent.setup();
+  const result = deferred<ExtractionJobResult>();
+  vi.mocked(extractFromImage).mockReturnValueOnce(result.promise);
+
+  await startPendingManualReview(user);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(5_000);
+  });
+
+  fireEvent.click(screen.getByRole('button', { name: /review manually now/i }));
+
+  expect(screen.getByText(/manual evidence mode/i)).toHaveFocus();
+
+  await act(async () => {
+    result.resolve({ extraction: {}, rawText: '', source: 'ocr' });
+    await Promise.resolve();
+  });
+});
+
+it('uses one polite live region for slow-review recovery', async () => {
+  const user = userEvent.setup();
+  const result = deferred<ExtractionJobResult>();
+  vi.mocked(extractFromImage).mockReturnValueOnce(result.promise);
+
+  await startPendingManualReview(user);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(5_000);
+  });
+
+  expect(screen.getByText(/this is taking longer than expected/i).closest('aside'))
+    .not.toHaveAttribute('role', 'status');
+
+  await act(async () => {
+    result.resolve({ extraction: {}, rawText: '', source: 'ocr' });
+    await Promise.resolve();
+  });
+});
+
+it('allows an explicit OCR stop after fifteen seconds before manual review', async () => {
+  const user = userEvent.setup();
+  const result = deferred<ExtractionJobResult>();
+  let signal: AbortSignal | undefined;
+  vi.mocked(extractFromImage).mockImplementationOnce((_file, _onProgress, options) => {
+    signal = options?.signal;
+    return result.promise;
+  });
+
+  await startPendingManualReview(user);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(15_000);
+  });
+
+  fireEvent.click(screen.getByRole('button', { name: /stop OCR and review manually/i }));
+
+  expect(signal?.aborted).toBe(true);
+  expect(screen.getByText(/manual evidence mode/i)).toBeInTheDocument();
+
+  await act(async () => {
+    result.resolve({ extraction: {}, rawText: '', source: 'ocr' });
+    await Promise.resolve();
+  });
+});
+
+it('cancels a still-running manual-path extraction when the reviewer leaves it', async () => {
+  const user = userEvent.setup();
+  const result = deferred<ExtractionJobResult>();
+  let signal: AbortSignal | undefined;
+  vi.mocked(extractFromImage).mockImplementationOnce((_file, _onProgress, options) => {
+    signal = options?.signal;
+    return result.promise;
+  });
+
+  await startPendingManualReview(user);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(5_000);
+  });
+  fireEvent.click(screen.getByRole('button', { name: /review manually now/i }));
+  fireEvent.click(screen.getByRole('button', { name: /review another label/i }));
+
+  expect(signal?.aborted).toBe(true);
+
+  await act(async () => {
+    result.resolve({ extraction: {}, rawText: '', source: 'ocr' });
+    await Promise.resolve();
+  });
+});
+
+it('prewarms OCR only after a reviewer enters a single or batch intake', async () => {
+  const user = userEvent.setup();
+  render(<App />);
+
+  await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+  expect(prewarmOcr).not.toHaveBeenCalled();
+
+  await user.click(screen.getByRole('button', { name: /open guided demo/i }));
+  await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+  expect(prewarmOcr).not.toHaveBeenCalled();
+
+  await user.click(screen.getByRole('button', { name: /new review/i }));
+  await waitFor(() => {
+    expect(prewarmOcr).toHaveBeenCalledTimes(1);
+  });
+
+  await user.click(screen.getByRole('button', { name: /^batch review$/i }));
+  await waitFor(() => {
+    expect(prewarmOcr).toHaveBeenCalledTimes(2);
+  });
+});
+
+it('keeps warning typography and legibility confirmations as separate reviewer checks', async () => {
+  const user = userEvent.setup();
+  vi.mocked(extractFromImage).mockResolvedValueOnce({
+    extraction: {},
+    rawText: '',
+    source: 'ocr',
+  });
+
+  await startManualReview(user);
+
+  const typography = await screen.findByRole('checkbox', {
+    name: /i visually confirmed the warning heading is uppercase and bold/i,
+  });
+  const legibility = screen.getByRole('checkbox', {
+    name: /i reviewed warning legibility, contrast, and placement\. exact printed type size still needs final regulatory review/i,
+  });
+  const legibilityRow = screen.getByRole('row', { name: /warning legibility/i });
+
+  expect(legibilityRow).toHaveTextContent('Needs review');
+  await user.click(typography);
+  await user.click(legibility);
+
+  expect(typography).toBeChecked();
+  expect(legibility).toBeChecked();
+  expect(legibilityRow).toHaveTextContent('Match');
+  expect(legibilityRow).toHaveTextContent(
+    'An agent reviewed warning legibility, contrast, and placement.',
+  );
+});
+
+it('runs an in-memory same-origin sample benchmark with honest run labels and timings', async () => {
+  const user = userEvent.setup();
+  const fetchSample = vi.fn().mockResolvedValue({
+    ok: true,
+    blob: async () => new Blob(['sample'], { type: 'image/jpeg' }),
+  });
+  vi.stubGlobal('fetch', fetchSample);
+  vi.mocked(extractFromImage)
+    .mockResolvedValueOnce({
+      extraction: { brandName: ocrCandidate('Old Tom') },
+      rawText: 'OLD TOM',
+      source: 'ocr',
+      durationMs: 1_210,
+      timings: {
+        preparationMs: 120,
+        workerWaitMs: 890,
+        recognitionMs: 200,
+        totalMs: 1_210,
+      },
+    })
+    .mockResolvedValueOnce({
+      extraction: {},
+      rawText: '',
+      source: 'ocr',
+      error: 'unreadable',
+      timings: {
+        preparationMs: 80,
+        workerWaitMs: 0,
+        recognitionMs: 740,
+        totalMs: 820,
+      },
+    });
+
+  render(<App />);
+  await user.click(screen.getByRole('button', { name: /run local sample benchmark/i }));
+
+  const progress = screen.getByRole('status', { name: /benchmark progress/i });
+  expect(progress).toHaveAttribute('aria-live', 'polite');
+  expect(screen.queryByRole('heading', { name: /first sample run/i })).not.toBeInTheDocument();
+
+  await user.click(screen.getByRole('button', { name: /^run benchmark$/i }));
+
+  expect(await screen.findByRole('heading', { name: /first sample run/i })).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: /second warm-worker run/i })).toBeInTheDocument();
+  expect(fetchSample).toHaveBeenCalledWith(
+    '/demo/old-tom-bourbon.jpg',
+    expect.objectContaining({ signal: expect.any(AbortSignal) }),
+  );
+  expect(extractFromImage).toHaveBeenCalledTimes(2);
+  const firstRun = screen.getByRole('article', { name: /first sample run/i });
+  expect(within(firstRun).getByText('Total: 1.2 s')).toBeInTheDocument();
+  expect(within(firstRun).getByText('Preparation: 0.1 s')).toBeInTheDocument();
+  expect(within(firstRun).getByRole('listitem')).toHaveTextContent(
+    'Brand name: Old Tom — 99% confidence',
+  );
+  expect(screen.getByText(/extraction error: unreadable/i)).toBeInTheDocument();
+  expect(screen.queryByText(/network-cold/i)).not.toBeInTheDocument();
+
+  await user.click(screen.getByRole('button', { name: /back to overview/i }));
+  await user.click(screen.getByRole('button', { name: /run local sample benchmark/i }));
+  expect(screen.getByText(/no benchmark runs yet/i)).toBeInTheDocument();
+  expect(screen.queryByRole('heading', { name: /first sample run/i })).not.toBeInTheDocument();
+});
+
+it('cancels a pending benchmark fetch when navigation unmounts the panel', async () => {
+  const user = userEvent.setup();
+  const response = deferred<{ ok: boolean; blob: () => Promise<Blob> }>();
+  let fetchSignal: AbortSignal | undefined;
+  const fetchSample = vi.fn((_url: string, init?: RequestInit) => {
+    fetchSignal = init?.signal ?? undefined;
+    return response.promise;
+  });
+  vi.stubGlobal('fetch', fetchSample);
+
+  render(<App />);
+  await user.click(screen.getByRole('button', { name: /run local sample benchmark/i }));
+  await user.click(screen.getByRole('button', { name: /^run benchmark$/i }));
+
+  expect(fetchSignal).toBeDefined();
+  await user.click(screen.getByRole('button', { name: /^new review$/i }));
+
+  expect(fetchSignal?.aborted).toBe(true);
+  expect(
+    screen.getByRole('heading', { name: /start with the facts submitted for review/i }),
+  ).toBeInTheDocument();
+
+  await act(async () => {
+    response.resolve({
+      ok: true,
+      blob: async () => new Blob(['sample'], { type: 'image/jpeg' }),
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  expect(extractFromImage).not.toHaveBeenCalled();
+  expect(screen.queryByRole('heading', { name: /first sample run/i })).not.toBeInTheDocument();
+});
+
+it('cancels a pending benchmark OCR and ignores its cancelled result after navigation', async () => {
+  const user = userEvent.setup();
+  let extractionSignal: AbortSignal | undefined;
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+    ok: true,
+    blob: async () => new Blob(['sample'], { type: 'image/jpeg' }),
+  }));
+  vi.mocked(extractFromImage).mockImplementationOnce((_file, _onProgress, options) => {
+    extractionSignal = options?.signal;
+    return new Promise<ExtractionJobResult>((resolve) => {
+      options?.signal?.addEventListener('abort', () => {
+        resolve({ extraction: {}, rawText: '', source: 'ocr', error: 'cancelled' });
+      }, { once: true });
+    });
+  });
+
+  render(<App />);
+  await user.click(screen.getByRole('button', { name: /run local sample benchmark/i }));
+  await user.click(screen.getByRole('button', { name: /^run benchmark$/i }));
+  await waitFor(() => {
+    expect(extractionSignal).toBeDefined();
+  });
+
+  await user.click(screen.getByRole('button', { name: /^new review$/i }));
+
+  expect(extractionSignal?.aborted).toBe(true);
+  await act(async () => {
+    await Promise.resolve();
+  });
+  expect(
+    screen.getByRole('heading', { name: /start with the facts submitted for review/i }),
+  ).toBeInTheDocument();
+  expect(screen.queryByRole('heading', { name: /first sample run/i })).not.toBeInTheDocument();
+});
+
+it('keeps the benchmark runnable after Strict Mode replays its lifecycle cleanup', async () => {
+  const user = userEvent.setup();
+  const fetchSample = vi.fn().mockResolvedValue({
+    ok: true,
+    blob: async () => new Blob(['sample'], { type: 'image/jpeg' }),
+  });
+  vi.stubGlobal('fetch', fetchSample);
+  vi.mocked(extractFromImage).mockResolvedValue({
+    extraction: {},
+    rawText: '',
+    source: 'ocr',
+  });
+
+  render(
+    <StrictMode>
+      <App />
+    </StrictMode>,
+  );
+  await user.click(screen.getByRole('button', { name: /run local sample benchmark/i }));
+  await user.click(screen.getByRole('button', { name: /^run benchmark$/i }));
+
+  await waitFor(() => {
+    expect(fetchSample).toHaveBeenCalledTimes(1);
+  });
+});
+
+it('clears a settled manual-path controller before subsequent navigation', async () => {
+  const user = userEvent.setup();
+  const result = deferred<ExtractionJobResult>();
+  let signal: AbortSignal | undefined;
+  vi.mocked(extractFromImage).mockImplementationOnce((_file, _onProgress, options) => {
+    signal = options?.signal;
+    return result.promise;
+  });
+
+  await startPendingManualReview(user);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(5_000);
+  });
+  fireEvent.click(screen.getByRole('button', { name: /review manually now/i }));
+
+  await act(async () => {
+    result.resolve({ extraction: {}, rawText: '', source: 'ocr' });
+    await Promise.resolve();
+  });
+  expect(signal?.aborted).toBe(false);
+
+  fireEvent.click(screen.getByRole('button', { name: /review another label/i }));
+
+  expect(signal?.aborted).toBe(false);
+  expect(
+    screen.getByRole('heading', { name: /start with the facts submitted for review/i }),
+  ).toBeInTheDocument();
+});
+
+it('preserves fixture evidence when an agent corrects an extracted candidate', async () => {
   const user = userEvent.setup();
   render(<App />);
 
@@ -437,7 +1175,7 @@ it('preserves raw OCR evidence when an agent corrects an extracted candidate', a
   await user.click(screen.getByRole('button', { name: /save brand name correction/i }));
 
   expect(screen.getByText('Agent-entered')).toBeInTheDocument();
-  expect(screen.getByText(/raw OCR: OLD TOM DISTILLERY/i)).toBeInTheDocument();
+  expect(screen.getByText(/fixture text: OLD TOM DISTILLERY/i)).toBeInTheDocument();
 });
 
 it('lets an agent add a missing imported-origin candidate without fabricating raw OCR evidence', async () => {
@@ -645,6 +1383,153 @@ it('explains unsupported application number formats before extraction begins', a
   await user.click(screen.getByRole('button', { name: /start evidence review/i }));
 
   expect(await screen.findByRole('table')).toBeInTheDocument();
+});
+
+it('blocks explicitly out-of-scope beverages before extraction begins', async () => {
+  const user = userEvent.setup();
+  vi.mocked(extractFromImage).mockResolvedValueOnce({
+    extraction: {},
+    rawText: '',
+    source: 'ocr',
+  });
+  render(<App />);
+
+  await user.click(screen.getByRole('button', { name: /review a label/i }));
+  await user.type(screen.getByRole('textbox', { name: /^brand name$/i }), 'Old Tom');
+  await user.type(screen.getByRole('textbox', { name: /class\/type/i }), 'wine');
+  await user.type(screen.getByRole('textbox', { name: /alcohol by volume/i }), '45%');
+  await user.type(screen.getByRole('textbox', { name: /net contents/i }), '750 mL');
+  await user.type(screen.getByRole('textbox', { name: /producer address/i }), 'Old Tom, KY');
+  await user.upload(
+    screen.getByLabelText(/^choose label image$/i),
+    new File(['label'], 'wine.png', { type: 'image/png' }),
+  );
+
+  await user.click(screen.getByRole('button', { name: /start evidence review/i }));
+  await user.click(screen.getByRole('button', { name: /start evidence review/i }));
+
+  const scopeError = screen.getByRole('alert');
+  expect(scopeError).toHaveTextContent(
+    /proofline is limited to u\.s\. distilled-spirit labels/i,
+  );
+  expect(
+    scopeError.textContent?.match(/Proofline is limited to U\.S\. distilled-spirit labels\./g),
+  ).toHaveLength(1);
+  expect(extractFromImage).not.toHaveBeenCalled();
+});
+
+it('reports an out-of-scope beverage before requiring a label image', async () => {
+  const user = userEvent.setup();
+  render(<App />);
+
+  await user.click(screen.getByRole('button', { name: /review a label/i }));
+  await user.type(screen.getByRole('textbox', { name: /^brand name$/i }), 'Old Tom');
+  await user.type(screen.getByRole('textbox', { name: /class\/type/i }), 'Wine');
+  await user.type(screen.getByRole('textbox', { name: /alcohol by volume/i }), '45%');
+  await user.type(screen.getByRole('textbox', { name: /net contents/i }), '750 mL');
+  await user.type(screen.getByRole('textbox', { name: /producer address/i }), 'Old Tom, KY');
+
+  await user.click(screen.getByRole('button', { name: /start evidence review/i }));
+
+  const scopeError = screen.getByRole('alert');
+  expect(scopeError).toHaveTextContent(
+    /proofline is limited to u\.s\. distilled-spirit labels/i,
+  );
+  expect(scopeError).not.toHaveTextContent(/choose a jpeg, png, or webp label image/i);
+  expect(extractFromImage).not.toHaveBeenCalled();
+});
+
+it('reports an out-of-scope imported beverage before image or origin validation', async () => {
+  const user = userEvent.setup();
+  render(<App />);
+
+  await user.click(screen.getByRole('button', { name: /review a label/i }));
+  await user.type(screen.getByRole('textbox', { name: /^brand name$/i }), 'Old Tom');
+  await user.type(screen.getByRole('textbox', { name: /class\/type/i }), 'Wine');
+  await user.type(screen.getByRole('textbox', { name: /alcohol by volume/i }), '45%');
+  await user.type(screen.getByRole('textbox', { name: /net contents/i }), '750 mL');
+  await user.type(screen.getByRole('textbox', { name: /producer address/i }), 'Old Tom, KY');
+  await user.click(screen.getByRole('checkbox', { name: /imported product/i }));
+
+  await user.click(screen.getByRole('button', { name: /start evidence review/i }));
+
+  const scopeError = screen.getByRole('alert');
+  expect(scopeError).toHaveTextContent(
+    /proofline is limited to u\.s\. distilled-spirit labels/i,
+  );
+  expect(scopeError).not.toHaveTextContent(/choose a jpeg, png, or webp label image/i);
+  expect(scopeError).not.toHaveTextContent(/country of origin is required/i);
+  expect(extractFromImage).not.toHaveBeenCalled();
+});
+
+it('clears stale image validation when a retry becomes out of scope', async () => {
+  const user = userEvent.setup();
+  render(<App />);
+
+  await user.click(screen.getByRole('button', { name: /review a label/i }));
+  await user.type(screen.getByRole('textbox', { name: /^brand name$/i }), 'Old Tom');
+  const classType = screen.getByRole('textbox', { name: /class\/type/i });
+  await user.type(classType, 'Bourbon Whiskey');
+  await user.type(screen.getByRole('textbox', { name: /alcohol by volume/i }), '45%');
+  await user.type(screen.getByRole('textbox', { name: /net contents/i }), '750 mL');
+  await user.type(screen.getByRole('textbox', { name: /producer address/i }), 'Old Tom, KY');
+
+  await user.click(screen.getByRole('button', { name: /start evidence review/i }));
+
+  const imageInput = screen.getByLabelText(/^choose label image$/i);
+  expect(imageInput).toHaveAttribute('aria-invalid', 'true');
+  expect(screen.getByRole('alert')).toHaveTextContent(
+    /choose a jpeg, png, or webp label image/i,
+  );
+
+  await user.clear(classType);
+  await user.type(classType, 'Wine');
+  await user.click(screen.getByRole('button', { name: /start evidence review/i }));
+
+  expect(screen.getAllByRole('alert')).toHaveLength(1);
+  expect(screen.getByRole('alert')).toHaveTextContent(
+    /proofline is limited to u\.s\. distilled-spirit labels/i,
+  );
+  expect(screen.queryByText(/choose a jpeg, png, or webp label image/i)).not.toBeInTheDocument();
+  expect(imageInput).not.toHaveAttribute('aria-invalid', 'true');
+  expect(extractFromImage).not.toHaveBeenCalled();
+});
+
+it('clears stale origin validation when an imported retry becomes out of scope', async () => {
+  const user = userEvent.setup();
+  render(<App />);
+
+  await user.click(screen.getByRole('button', { name: /review a label/i }));
+  await user.type(screen.getByRole('textbox', { name: /^brand name$/i }), 'Old Tom');
+  const classType = screen.getByRole('textbox', { name: /class\/type/i });
+  await user.type(classType, 'Bourbon Whiskey');
+  await user.type(screen.getByRole('textbox', { name: /alcohol by volume/i }), '45%');
+  await user.type(screen.getByRole('textbox', { name: /net contents/i }), '750 mL');
+  await user.type(screen.getByRole('textbox', { name: /producer address/i }), 'Old Tom, KY');
+  await user.click(screen.getByRole('checkbox', { name: /imported product/i }));
+  await user.upload(
+    screen.getByLabelText(/^choose label image$/i),
+    new File(['label'], 'old-tom.png', { type: 'image/png' }),
+  );
+
+  await user.click(screen.getByRole('button', { name: /start evidence review/i }));
+
+  const countryOfOrigin = screen.getByRole('textbox', { name: /country of origin/i });
+  expect(countryOfOrigin).toHaveAttribute('aria-invalid', 'true');
+  expect(screen.getByRole('alert')).toHaveTextContent(
+    /country of origin is required for an imported product/i,
+  );
+
+  await user.clear(classType);
+  await user.type(classType, 'Wine');
+  await user.click(screen.getByRole('button', { name: /start evidence review/i }));
+
+  expect(screen.getAllByRole('alert')).toHaveLength(1);
+  expect(screen.getByRole('alert')).toHaveTextContent(
+    /proofline is limited to u\.s\. distilled-spirit labels/i,
+  );
+  expect(countryOfOrigin).not.toHaveAttribute('aria-invalid', 'true');
+  expect(extractFromImage).not.toHaveBeenCalled();
 });
 
 it('keeps the reviewer informed when OCR rejects unexpectedly', async () => {

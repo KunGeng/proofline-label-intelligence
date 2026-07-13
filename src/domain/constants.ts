@@ -19,6 +19,7 @@ const fieldLabels: Record<FieldKey, string> = {
   warningText: 'Warning text',
   warningHeading: 'Warning heading',
   warningTypography: 'Warning typography',
+  warningLegibility: 'Warning legibility',
 };
 
 export const fieldLabel = (field: FieldKey): string => fieldLabels[field];

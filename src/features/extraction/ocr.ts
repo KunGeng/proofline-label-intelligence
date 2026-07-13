@@ -1,4 +1,5 @@
 import Tesseract from 'tesseract.js';
+import { createCandidateConfidenceResolver } from './confidence';
 import { extractFromText } from './parser';
 import type {
   ExtractFromImage,
@@ -18,7 +19,7 @@ export type WorkerFactory = typeof Tesseract.createWorker;
 type OcrWorker = Awaited<ReturnType<WorkerFactory>>;
 
 let activeWorkers = 0;
-const waitingForWorker: Array<() => void> = [];
+const waitingForWorker: WorkerSlotRequest[] = [];
 
 export interface PreparedImage {
   image: HTMLCanvasElement;
@@ -35,25 +36,65 @@ export interface ExtractFromImageDependencies {
 
 class ImageInputError extends Error {}
 
+class OcrCancellationError extends Error {}
+
+interface WorkerSlotRequest {
+  promise: Promise<boolean>;
+  grant(): boolean;
+  cancel(): void;
+}
+
 const clampProgress = (value: number): number => Math.max(0, Math.min(1, value));
 
-const acquireWorker = (): Promise<void> =>
-  new Promise((resolve) => {
-    if (activeWorkers < MAX_CONCURRENT_WORKERS) {
-      activeWorkers += 1;
-      resolve();
-      return;
+const acquireWorker = (): WorkerSlotRequest => {
+  let settled = false;
+  let resolveRequest!: (acquired: boolean) => void;
+  const promise = new Promise<boolean>((resolve) => {
+    resolveRequest = resolve;
+  });
+  let request!: WorkerSlotRequest;
+
+  const settle = (acquired: boolean): boolean => {
+    if (settled) {
+      return false;
     }
 
-    waitingForWorker.push(resolve);
-  });
+    settled = true;
+    resolveRequest(acquired);
+    return true;
+  };
+
+  request = {
+    promise,
+    grant: () => settle(true),
+    cancel: () => {
+      if (!settle(false)) {
+        return;
+      }
+
+      const waitingIndex = waitingForWorker.indexOf(request);
+      if (waitingIndex >= 0) {
+        waitingForWorker.splice(waitingIndex, 1);
+      }
+    },
+  };
+
+  if (activeWorkers < MAX_CONCURRENT_WORKERS) {
+    activeWorkers += 1;
+    request.grant();
+  } else {
+    waitingForWorker.push(request);
+  }
+
+  return request;
+};
 
 const releaseWorker = (): void => {
-  const next = waitingForWorker.shift();
-
-  if (next) {
-    next();
-    return;
+  while (waitingForWorker.length > 0) {
+    const next = waitingForWorker.shift()!;
+    if (next.grant()) {
+      return;
+    }
   }
 
   activeWorkers -= 1;
@@ -168,6 +209,14 @@ const inputErrorResult = (
   source: 'ocr',
 });
 
+const cancelledResult = (thumbnailUrl?: string): ExtractionJobResult => ({
+  extraction: {},
+  rawText: '',
+  thumbnailUrl,
+  error: 'cancelled',
+  source: 'ocr',
+});
+
 const terminateWorker = async (worker: OcrWorker): Promise<void> => {
   try {
     await worker.terminate();
@@ -184,6 +233,7 @@ interface PooledWorker {
   worker: OcrWorker;
   listenerRef: ListenerRef;
   broken: boolean;
+  retired: boolean;
 }
 
 const now = (): number =>
@@ -191,15 +241,50 @@ const now = (): number =>
     ? performance.now()
     : Date.now();
 
+interface CancellationRace<T> {
+  promise: Promise<T>;
+  cancel(): void;
+}
+
+const raceWithCancellation = <T>(operation: Promise<T>): CancellationRace<T> => {
+  let cancelled = false;
+  let rejectCancellation!: (reason: OcrCancellationError) => void;
+  const cancellation = new Promise<never>((_resolve, reject) => {
+    rejectCancellation = reject;
+  });
+
+  return {
+    promise: Promise.race([operation, cancellation]),
+    cancel: () => {
+      if (!cancelled) {
+        cancelled = true;
+        rejectCancellation(new OcrCancellationError());
+      }
+    },
+  };
+};
+
 const initializeWorker = (
   createWorker: WorkerFactory,
   listenerRef: ListenerRef,
   initializationTimeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<PooledWorker> =>
   new Promise((resolve, reject) => {
     let settled = false;
     let pooled: PooledWorker | undefined;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    let abortInitialization: (() => void) | undefined;
+
+    const clearInitializationResources = (): void => {
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+      }
+
+      if (abortInitialization) {
+        signal?.removeEventListener('abort', abortInitialization);
+      }
+    };
 
     const rejectInitialization = (reason: unknown): void => {
       if (settled) {
@@ -207,10 +292,8 @@ const initializeWorker = (
       }
 
       settled = true;
-
-      if (timeoutId !== undefined) {
-        clearTimeout(timeoutId);
-      }
+      listenerRef.current = undefined;
+      clearInitializationResources();
 
       reject(
         reason instanceof Error
@@ -226,14 +309,22 @@ const initializeWorker = (
       }
 
       settled = true;
+      clearInitializationResources();
 
-      if (timeoutId !== undefined) {
-        clearTimeout(timeoutId);
-      }
-
-      pooled = { worker, listenerRef, broken: false };
+      pooled = { worker, listenerRef, broken: false, retired: false };
       resolve(pooled);
     };
+
+    abortInitialization = () => {
+      rejectInitialization(new OcrCancellationError());
+    };
+
+    if (signal?.aborted) {
+      abortInitialization();
+      return;
+    }
+
+    signal?.addEventListener('abort', abortInitialization, { once: true });
 
     timeoutId = setTimeout(
       () => rejectInitialization(new Error('OCR worker initialization timed out.')),
@@ -269,9 +360,14 @@ const initializeWorker = (
     }
   });
 
-export const createExtractFromImage = (
+export interface OcrEngine {
+  extract: ExtractFromImage;
+  prewarm(): Promise<void>;
+}
+
+export const createOcrEngine = (
   dependencies: ExtractFromImageDependencies = {},
-): ExtractFromImage => {
+): OcrEngine => {
   const createWorker = dependencies.createWorker ?? Tesseract.createWorker;
   const imagePreparer = dependencies.prepareImage ?? prepareImage;
   const initializationTimeoutMs =
@@ -280,62 +376,64 @@ export const createExtractFromImage = (
   // compilation, and language-data loading are paid once per slot, not per label.
   const idleWorkers: PooledWorker[] = [];
 
-  return async (file, onProgress) => {
-    const startedAt = now();
-    let pooled: PooledWorker | undefined;
-    let thumbnailUrl: string | undefined;
-    let workerSlotAcquired = false;
+  const retireWorker = (pooled: PooledWorker): void => {
+    if (pooled.retired) {
+      return;
+    }
 
-    onProgress({ phase: 'preparing', value: 0 });
+    pooled.retired = true;
+    pooled.listenerRef.current = undefined;
+    const idleIndex = idleWorkers.indexOf(pooled);
+    if (idleIndex >= 0) {
+      idleWorkers.splice(idleIndex, 1);
+    }
+    void terminateWorker(pooled.worker);
+  };
+
+  const takeIdleWorker = (): PooledWorker | undefined => {
+    let pooled = idleWorkers.pop();
+
+    while (pooled) {
+      if (!pooled.broken && !pooled.retired) {
+        return pooled;
+      }
+
+      retireWorker(pooled);
+      pooled = idleWorkers.pop();
+    }
+
+    return undefined;
+  };
+
+  const warmOneWorker = async (): Promise<void> => {
+    const workerSlotRequest = acquireWorker();
+    const workerSlotAcquired = await workerSlotRequest.promise;
+    let pooled: PooledWorker | undefined;
+    let reusable = false;
 
     try {
-      const prepared = await imagePreparer(file);
-      thumbnailUrl = prepared.thumbnailUrl;
-
-      await acquireWorker();
-      workerSlotAcquired = true;
-
-      pooled = idleWorkers.pop();
-      if (pooled) {
-        pooled.listenerRef.current = onProgress;
-      } else {
-        pooled = await initializeWorker(
-          createWorker,
-          { current: onProgress },
-          initializationTimeoutMs,
-        );
+      if (!workerSlotAcquired) {
+        return;
       }
 
-      onProgress({ phase: 'reading', value: 0 });
-      const result = await pooled.worker.recognize(prepared.image);
-      const rawText = result.data.text;
-      const confidence = clampProgress(result.data.confidence / 100);
+      pooled = takeIdleWorker() ?? await initializeWorker(
+        createWorker,
+        { current: undefined },
+        initializationTimeoutMs,
+      );
 
-      onProgress({ phase: 'validating', value: 1 });
-
-      pooled.listenerRef.current = undefined;
-      if (!pooled.broken && idleWorkers.length < MAX_CONCURRENT_WORKERS) {
-        idleWorkers.push(pooled);
-      } else {
-        void terminateWorker(pooled.worker);
-      }
-      pooled = undefined;
-
-      return {
-        extraction: extractFromText(rawText, confidence),
-        rawText,
-        thumbnailUrl,
-        source: 'ocr',
-        durationMs: now() - startedAt,
-      };
-    } catch (error) {
-      return error instanceof ImageInputError
-        ? inputErrorResult(error, thumbnailUrl)
-        : unreadableResult(thumbnailUrl);
-    } finally {
-      if (pooled) {
+      if (
+        !pooled.broken &&
+        !pooled.retired &&
+        idleWorkers.length < MAX_CONCURRENT_WORKERS
+      ) {
         pooled.listenerRef.current = undefined;
-        void terminateWorker(pooled.worker);
+        idleWorkers.push(pooled);
+        reusable = true;
+      }
+    } finally {
+      if (pooled && !reusable) {
+        retireWorker(pooled);
       }
 
       if (workerSlotAcquired) {
@@ -343,6 +441,196 @@ export const createExtractFromImage = (
       }
     }
   };
+
+  let warming: Promise<void> | undefined;
+  const prewarm = (): Promise<void> => {
+    if (warming) {
+      return warming;
+    }
+
+    warming = warmOneWorker().finally(() => {
+      warming = undefined;
+    });
+    return warming;
+  };
+
+  const extract: ExtractFromImage = async (file, onProgress, options) => {
+    const startedAt = now();
+    let preparationMs: number | undefined;
+    let pooled: PooledWorker | undefined;
+    let thumbnailUrl: string | undefined;
+    let workerSlotRequest: WorkerSlotRequest | undefined;
+    let workerSlotAcquired = false;
+    let completed = false;
+    let aborted = options?.signal?.aborted ?? false;
+    let cancelPreparation: (() => void) | undefined;
+    let cancelRecognition: (() => void) | undefined;
+
+    const isAborted = (): boolean => aborted || options?.signal?.aborted === true;
+    const abortExtraction = (): void => {
+      aborted = true;
+      workerSlotRequest?.cancel();
+      if (pooled) {
+        retireWorker(pooled);
+      }
+      cancelPreparation?.();
+      cancelRecognition?.();
+    };
+
+    options?.signal?.addEventListener('abort', abortExtraction, { once: true });
+    if (isAborted()) {
+      abortExtraction();
+    }
+
+    try {
+      if (isAborted()) {
+        return cancelledResult();
+      }
+
+      onProgress({ phase: 'preparing', value: 0 });
+      if (isAborted()) {
+        return cancelledResult();
+      }
+
+      const preparation = raceWithCancellation(imagePreparer(file));
+      cancelPreparation = preparation.cancel;
+      if (isAborted()) {
+        cancelPreparation();
+      }
+      const prepared = await preparation.promise;
+      cancelPreparation = undefined;
+      thumbnailUrl = prepared.thumbnailUrl;
+      preparationMs = now() - startedAt;
+
+      if (isAborted()) {
+        return cancelledResult(thumbnailUrl);
+      }
+
+      const workerWaitStartedAt = now();
+      workerSlotRequest = acquireWorker();
+      if (isAborted()) {
+        workerSlotRequest.cancel();
+      }
+      workerSlotAcquired = await workerSlotRequest.promise;
+      workerSlotRequest = undefined;
+
+      if (!workerSlotAcquired || isAborted()) {
+        return cancelledResult(thumbnailUrl);
+      }
+
+      pooled = takeIdleWorker();
+      if (pooled) {
+        pooled.listenerRef.current = onProgress;
+      } else {
+        pooled = await initializeWorker(
+          createWorker,
+          { current: onProgress },
+          initializationTimeoutMs,
+          options?.signal,
+        );
+      }
+
+      const workerWaitMs = now() - workerWaitStartedAt;
+      if (isAborted()) {
+        return cancelledResult(thumbnailUrl);
+      }
+
+      onProgress({ phase: 'reading', value: 0 });
+      if (isAborted()) {
+        return cancelledResult(thumbnailUrl);
+      }
+
+      const recognitionStartedAt = now();
+      const recognition = raceWithCancellation(
+        pooled.worker.recognize(prepared.image, {}, {
+          text: true,
+          blocks: true,
+          hocr: false,
+          tsv: false,
+        }),
+      );
+      cancelRecognition = recognition.cancel;
+      if (isAborted()) {
+        cancelRecognition();
+      }
+      const result = await recognition.promise;
+      cancelRecognition = undefined;
+
+      if (isAborted()) {
+        throw new OcrCancellationError();
+      }
+
+      const recognitionMs = now() - recognitionStartedAt;
+      const rawText = result.data.text;
+      const confidenceFor = createCandidateConfidenceResolver(
+        result.data.words ?? [],
+        result.data.lines ?? [],
+      );
+
+      onProgress({ phase: 'validating', value: 1 });
+      if (isAborted()) {
+        throw new OcrCancellationError();
+      }
+
+      const completedAt = now();
+      const totalMs = completedAt - startedAt;
+      completed = true;
+
+      return {
+        extraction: extractFromText(rawText, confidenceFor),
+        rawText,
+        thumbnailUrl,
+        source: 'ocr',
+        timings: {
+          preparationMs,
+          workerWaitMs,
+          recognitionMs,
+          totalMs,
+        },
+        durationMs: totalMs,
+      };
+    } catch (error) {
+      if (isAborted() || error instanceof OcrCancellationError) {
+        return cancelledResult(thumbnailUrl);
+      }
+
+      return error instanceof ImageInputError
+        ? inputErrorResult(error, thumbnailUrl)
+        : unreadableResult(thumbnailUrl);
+    } finally {
+      options?.signal?.removeEventListener('abort', abortExtraction);
+      cancelPreparation = undefined;
+      cancelRecognition = undefined;
+      workerSlotRequest?.cancel();
+
+      if (pooled) {
+        pooled.listenerRef.current = undefined;
+        if (
+          completed &&
+          !isAborted() &&
+          !pooled.broken &&
+          !pooled.retired &&
+          idleWorkers.length < MAX_CONCURRENT_WORKERS
+        ) {
+          idleWorkers.push(pooled);
+        } else {
+          retireWorker(pooled);
+        }
+      }
+
+      if (workerSlotAcquired) {
+        releaseWorker();
+      }
+    }
+  };
+
+  return { extract, prewarm };
 };
 
-export const extractFromImage = createExtractFromImage();
+export const createExtractFromImage = (
+  dependencies: ExtractFromImageDependencies = {},
+): ExtractFromImage => createOcrEngine(dependencies).extract;
+
+const defaultEngine = createOcrEngine();
+export const extractFromImage = defaultEngine.extract;
+export const prewarmOcr = (): Promise<void> => defaultEngine.prewarm();

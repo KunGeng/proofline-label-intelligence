@@ -2,7 +2,7 @@
 
 > A browser-first evidence-review prototype for U.S. distilled-spirit labels. It turns declared label facts and a label image into a conservative, agent-led review—not an automatic approval.
 
-**Live prototype:** [proofline-label-intelligence.kungeng0803.chatgpt.site](https://proofline-label-intelligence.kungeng0803.chatgpt.site)
+**Existing public prototype:** [proofline-label-intelligence.kungeng0803.chatgpt.site](https://proofline-label-intelligence.kungeng0803.chatgpt.site)
 
 **Source repository:** [github.com/KunGeng/proofline-label-intelligence](https://github.com/KunGeng/proofline-label-intelligence)
 
@@ -22,7 +22,7 @@ Design rationale and trade-off discussion live in [docs/DESIGN.md](docs/DESIGN.m
 
 ## Try it in 60 seconds
 
-On the [live prototype](https://proofline-label-intelligence.kungeng0803.chatgpt.site) (or a local build):
+On a local build or the [existing public prototype](https://proofline-label-intelligence.kungeng0803.chatgpt.site):
 
 1. Download the sample label: [public/demo/old-tom-bourbon.jpg](public/demo/old-tom-bourbon.jpg) — the app also links it from both intake screens.
 2. Choose **New review**, enter the facts printed on it (brand `OLD TOM DISTILLERY`, class/type `Kentucky Straight Bourbon Whiskey`, ABV `45%`, proof `90`, net contents `750 mL`, producer `Old Tom Distillery, Louisville, KY`), and attach the image.
@@ -32,9 +32,12 @@ For batch: choose **Review a batch**, select the same sample image, and import t
 
 ## Quick start
 
-Prerequisite: Node.js 20+ and pnpm 9+.
+Prerequisite: Node.js 20+ with Corepack and pnpm 11.12.0. The repository's
+`packageManager` field pins that pnpm release; enable Corepack before installing so a
+local checkout uses the same package manager as CI.
 
 ```bash
+corepack enable
 pnpm install
 pnpm dev
 ```
@@ -73,11 +76,13 @@ old-tom-bourbon.jpg,OLD TOM DISTILLERY,Kentucky Straight Bourbon Whiskey,45%,90,
 
 CSV behavior is intentionally strict:
 
-- `filename` alone is valid for OCR triage; those items are marked **Application data required** rather than compared.
+- `filename` alone is valid for OCR triage; those items are marked **Application data required** rather than compared. Filename-only rows remain OCR triage.
 - If any application-data column is present, the complete application schema is required: `brandName`, `classType`, `abv`, `netContents`, `producerAddress`, and `isImported`. `proof` and `countryOfOrigin` remain conditional/optional as appropriate.
 - `isImported` must be `true` or `false`; imported rows require `countryOfOrigin`.
 - ABV, proof, and net contents must parse as supported numeric formats. A malformed or partial CSV is rejected rather than silently downgraded.
 - Duplicate selected filenames or duplicate CSV rows are flagged because a safe one-to-one match cannot be inferred. Selected files without a CSV row stay in OCR triage.
+- CSV application facts can open a full review without rerunning OCR. The embedded review
+  keeps the batch queue and in-progress work in place; returning updates the same row.
 
 Batch results export as a CSV with per-file status, field-state counts, and a `findings` column listing every non-match field, so a reviewer can sort a large batch by what actually needs attention.
 
@@ -95,22 +100,33 @@ flowchart LR
 
 This is a static React + TypeScript + Vite application. There is no application server.
 
-- **Evidence extraction:** `tesseract.js` loads its worker, WASM core, and English training data from same-origin files in `public/ocr/`. Images longer than 2,000 pixels are resized before OCR. Initialized workers are kept warm and reused (two maximum), so worker boot, WASM compilation, and language-data loading are paid once — not once per label. Failed initialization times out; a worker that fails mid-recognition is discarded rather than reused.
-- **Evidence model:** each parsed candidate carries the value, raw OCR text, confidence, and source. A reviewer correction replaces the candidate value, marks it **Agent-entered**, and treats it as human-verified; the original raw OCR text remains displayed as evidence.
+- **Evidence extraction:** `tesseract.js` loads its worker, WASM core, and English training data from same-origin files in `public/ocr/`. Images longer than 2,000 pixels are resized before OCR. After a reviewer intentionally enters a single or batch intake, at most one local OCR worker may prewarm; no OCR work runs on page load. The pool still has a hard maximum of two workers. Failed initialization times out; a worker that fails mid-recognition is discarded rather than reused.
+- **Evidence model:** each parsed candidate carries the value, raw OCR text, confidence, and source. For live OCR, field confidence is derived from matched OCR words or lines; if no safe mapping exists, it conservatively falls below the readable threshold instead of inheriting a page-wide score. A reviewer correction replaces the candidate value, marks it **Agent-entered**, and treats it as human-verified; the original raw OCR text remains displayed as evidence.
 - **Validation engine:** a pure, tested TypeScript module makes conservative comparisons. The UI consumes its field results rather than embedding compliance logic in components.
 - **Batch intake:** a strict CSV parser pairs CSV rows to selected image basenames, while a cancellation-aware queue owns the batch lifecycle and avoids stale worker results after a batch is cleared.
 - **Review experience:** accessible controls expose evidence, field-level reasons, status precedence, correction workflows, retry states, and a manual typography confirmation.
 
 ## Performance
 
-The discovery interviews set a hard usability bar: **results in about five seconds, or agents go back to reviewing by eye**. How the prototype addresses it:
+Five seconds is a usability recovery point, not a promised extraction time. The prototype
+makes timing and reviewer choices visible instead of claiming a universal result:
 
-- **Warm worker pool.** OCR workers are initialized once and reused across labels. The first label pays the one-time worker boot (WASM compile plus language-data load); subsequent labels pay only recognition.
-- **Bounded image size.** Labels are downscaled to a 2,000-pixel longest edge before recognition.
-- **Measured, not claimed.** The app displays the measured extraction time for every real review — on the single-label result and per row in a batch — and the batch progress line shows a running average with a remaining-time estimate. Speed on the evaluator's actual hardware is visible in the product rather than asserted in this README.
-- **Honest demo.** The guided demo is a precomputed fixture and is labeled as such; it does not present fixture speed as OCR speed.
+- **Intent-triggered worker readiness.** A single worker may be warmed after intake intent;
+  the second worker is demand-created for batch work. Labels are downscaled to a
+  2,000-pixel longest edge before recognition.
+- **Five-/fifteen-second recovery.** After five seconds, a reviewer may keep waiting or review manually. Manual mode opens the original label with empty OCR candidates, and a late OCR result cannot overwrite the human-led review. At fifteen seconds, a reviewer may stop OCR and review manually. That explicit action discards the active worker.
+- **Measured, not claimed.** The app displays measured extraction time for every real review
+  and batch progress includes a running average with a remaining-time estimate.
+- **Local benchmark.** `Run local sample benchmark` fetches the shipped sample from the same
+  origin and runs it twice on the current device. It labels the outcomes **First sample run**
+  and **Second warm-worker run**, with phase timings, field coverage, and field confidence.
+  It is a device-specific measurement, not a universal speed guarantee or a network-cold measurement; a normal session may already have a warmed worker.
+- **Honest demo.** The guided demo is a precomputed fixture and is labeled as such; it does
+  not present fixture speed as OCR speed.
 
-Local CPU recognition can still exceed the five-second bar for large, noisy, or stylized labels, especially on older hardware. That is a deliberate trade against the agency's blocked-egress network (see [Key trade-offs](#key-trade-offs)); the escalation path is image preprocessing, a faster local engine, or server-side OCR behind an approved endpoint in the [Azure evolution](#future-azure-path).
+Local CPU recognition can still take longer on large, noisy, or stylized labels,
+especially on older hardware. That is a deliberate browser-local trade; the evaluator
+can recover to manual review rather than wait indefinitely.
 
 ## Validation behavior
 
@@ -128,8 +144,12 @@ The federal warning is handled specially:
 
 - the body is compared with the exact canonical statement after whitespace normalization;
 - the heading must be the literal uppercase `GOVERNMENT WARNING:`;
-- OCR cannot establish layout, capitalization rendering, or bold weight reliably, so **visual typography confirmation** is always an explicit agent task; and
-- a typography-confirmed warning is still not an approval; the reviewer owns the final decision.
+- OCR cannot establish layout, capitalization rendering, or bold weight reliably, so
+  **visual typography confirmation** is always an explicit agent task;
+- Warning legibility is a manual reviewer confirmation. The reviewer inspects legibility,
+  contrast, and placement rather than treating OCR as proof of a physical-label property;
+- Exact printed type size remains a final regulatory review responsibility. Either
+  confirmation is evidence for an agent review, not an approval or final decision.
 
 Canonical source links:
 
@@ -145,7 +165,8 @@ Proofline is browser-first by design:
 
 - label files, OCR text, corrections, and comparison results live only in the current browser session;
 - the application has no backend, database, API key, analytics package, telemetry call, or external runtime OCR CDN;
-- selecting a label creates browser-local object URLs for preview; clearing a batch and leaving the page releases the application-held state; and
+- selecting a label creates browser-local object URLs for preview; clearing a batch and leaving the page releases the application-held state;
+- the local benchmark fetches only the shipped sample from the same origin and keeps its timing results in the browser session; and
 - a static host serves the app bundle and local OCR assets, but the client code does not upload label images or application facts.
 
 For a production deployment, review the hosting provider’s own request logging, CDN caching, and analytics settings separately. Those infrastructure controls are outside this prototype and should be disabled or configured to match the organization’s data-retention policy.
@@ -155,9 +176,9 @@ For a production deployment, review the hosting provider’s own request logging
 - **Scope:** U.S. distilled-spirit labels only. Beer, wine, ready-to-drink products, non-U.S. regimes, and broader advertising claims are out of scope.
 - **Evidence:** JPEG, PNG, and WebP only; PDFs, HEIC, and camera-live capture are not supported. Each file is capped at 10 MB and a selection is capped at 300 files.
 - **Physical-label checks:** OCR cannot prove printed type size, contrast, bold styling, package curvature, label attachment, or other physical-label requirements. An agent must verify the visual warning typography and any physical characteristics.
-- **OCR:** English OCR may misread stylized, curved, low-resolution, obstructed, or multilingual labels. Low-confidence and missing values remain review work, not silent defaults. No image preprocessing (contrast, deskew, thresholding) is applied yet beyond downscaling; that is the first accuracy lever for imperfect photos.
+- **OCR:** English OCR may misread stylized, curved, low-resolution, obstructed, or multilingual labels. Low-confidence and missing values remain review work, not silent defaults. Live OCR currently downscales images but does not apply contrast, deskew, or thresholding. The degraded guided scenario uses CSS-only visual degradation as a clearly disclosed display treatment; it does not alter the fixture's extracted evidence or claim live image preprocessing.
 - **Brand-name heuristic:** the parser proposes a brand candidate from prominent all-caps display lines. Lowercase or stylized wordmarks may not produce a candidate and fall to unreadable/review rather than a guess.
-- **Workflow:** there is no authentication, persistence, audit trail, role management, or automatic approval. A human reviewer must make any final compliance or COLA-related decision.
+- **Workflow:** there is no authentication, persistence, audit trail, role management, cloud batch service, or automatic approval. The batch queue runs in the current browser session. A human reviewer must make any final compliance or COLA-related decision.
 
 ## Key trade-offs
 
@@ -181,7 +202,7 @@ The suite covers deterministic validation and warning behavior, parser extractio
 
 ## Deployment
 
-**Deployment status:** published as a public Sites deployment at [proofline-label-intelligence.kungeng0803.chatgpt.site](https://proofline-label-intelligence.kungeng0803.chatgpt.site). The build remains a static browser-local application; the host serves assets but does not receive label images or application facts from the app.
+**Release status:** An existing public prototype is available at [proofline-label-intelligence.kungeng0803.chatgpt.site](https://proofline-label-intelligence.kungeng0803.chatgpt.site). It may serve an earlier validated build. The current source revision awaits final verification and deployment. The build remains a static browser-local application; the host serves assets but does not receive label images or application facts from the app.
 
 For any static host (including a Sites project), use:
 

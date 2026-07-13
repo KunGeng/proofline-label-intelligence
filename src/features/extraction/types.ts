@@ -12,6 +12,18 @@ export interface ExtractionJobResult {
   error?: string;
   source: 'ocr' | 'fixture';
   durationMs?: number;
+  timings?: ExtractionTimings;
+}
+
+export interface ExtractionTimings {
+  preparationMs: number;
+  workerWaitMs: number;
+  recognitionMs: number;
+  totalMs: number;
+}
+
+export interface ExtractionOptions {
+  signal?: AbortSignal;
 }
 
 export type ProgressListener = (event: ExtractionProgress) => void;
@@ -19,13 +31,29 @@ export type ProgressListener = (event: ExtractionProgress) => void;
 export type ExtractFromImage = (
   file: File,
   onProgress: ProgressListener,
+  options?: ExtractionOptions,
 ) => Promise<ExtractionJobResult>;
 
+export type DemoCaseId =
+  | 'clear'
+  | 'mismatch'
+  | 'foreign-origin'
+  | 'warning-heading'
+  | 'degraded';
+
+export type DemoFixtureVariant = 'foreign-origin' | 'warning-heading';
+
+export type DemoVisual =
+  | { kind: 'image'; src: string; className?: string }
+  | { kind: 'fixture'; variant: DemoFixtureVariant };
+
 export interface DemoCase {
-  id: string;
+  id: DemoCaseId;
   title: string;
-  imageUrl: string;
+  outcome: string;
   disclosure: string;
   application: ApplicationData;
   extraction: LabelExtraction;
+  rawText: string;
+  visual: DemoVisual;
 }

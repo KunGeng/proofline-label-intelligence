@@ -1,13 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { AppShell, type AppView } from './components/AppShell';
 import { BatchQueue } from './components/BatchQueue';
+import { BenchmarkPanel } from './components/BenchmarkPanel';
+import { DemoLabelFixture } from './components/DemoLabelFixture';
 import { IntakeForm } from './components/IntakeForm';
 import { Landing } from './components/Landing';
 import { ReviewDesk, type CandidateField } from './components/ReviewDesk';
 import { validateLabel } from './domain/validation';
-import type { ApplicationData, LabelExtraction } from './domain/types';
-import { oldTomDemo, OLD_TOM_RAW_TEXT } from './features/demo/cases';
-import { extractFromImage } from './features/extraction/ocr';
+import type { ApplicationData, LabelExtraction, ReviewFlags } from './domain/types';
+import { demoCases } from './features/demo/cases';
+import { extractFromImage, prewarmOcr } from './features/extraction/ocr';
+import type { DemoCaseId } from './features/extraction/types';
 import type { QueueItem } from './features/intake/queue';
 
 interface ActiveReview {
@@ -17,9 +21,13 @@ interface ActiveReview {
   extraction: LabelExtraction;
   rawText: string;
   isGuidedDemo?: boolean;
+  isManualEvidence?: boolean;
   imageUrl?: string;
+  imageClassName?: string;
+  evidencePreview?: ReactNode;
   objectUrl?: string;
   disclosure?: string;
+  shouldFocusReviewHeading?: boolean;
   error?: string;
   progress?: number;
   durationMs?: number;
@@ -55,6 +63,32 @@ const previewUrlFor = (file: File): string | undefined => {
   }
 };
 
+const emptyReviewFlags: ReviewFlags = {
+  warningTypographyConfirmed: false,
+  warningLegibilityConfirmed: false,
+};
+
+interface IdleCapableWindow {
+  requestIdleCallback?: (callback: () => void, options?: { timeout?: number }) => number;
+}
+
+const schedulePrewarm = (): void => {
+  const run = (): void => {
+    void prewarmOcr().catch(() => undefined);
+  };
+  const idleWindow = window as unknown as IdleCapableWindow;
+
+  if (idleWindow.requestIdleCallback) {
+    idleWindow.requestIdleCallback(run, { timeout: 1_500 });
+    return;
+  }
+
+  window.setTimeout(run, 0);
+};
+
+const manualEvidenceDisclosure =
+  'Manual evidence mode — no OCR candidate was used. Inspect the original label and enter only evidence you can verify.';
+
 interface AppProps {
   initialBatchItems?: QueueItem[];
 }
@@ -65,7 +99,12 @@ export function App({ initialBatchItems }: AppProps) {
   );
   const [review, setReview] = useState<ActiveReview>();
   const [warningTypographyConfirmed, setWarningTypographyConfirmed] = useState(false);
+  const [warningLegibilityConfirmed, setWarningLegibilityConfirmed] = useState(false);
+  const [slowExtraction, setSlowExtraction] = useState(false);
+  const [stopAvailable, setStopAvailable] = useState(false);
   const extractionRun = useRef(0);
+  const extractionAbort = useRef<AbortController | undefined>(undefined);
+  const slowTimerCleanup = useRef<(() => void) | undefined>(undefined);
 
   useEffect(() => {
     const objectUrl = review?.objectUrl;
@@ -77,25 +116,80 @@ export function App({ initialBatchItems }: AppProps) {
     };
   }, [review?.objectUrl]);
 
-  const resetTo = (nextView: Extract<AppView, 'landing' | 'intake' | 'batch'>): void => {
-    extractionRun.current += 1;
-    setReview(undefined);
-    setWarningTypographyConfirmed(false);
-    setView(nextView);
+  useEffect(
+    () => () => {
+      extractionRun.current += 1;
+      extractionAbort.current?.abort();
+      slowTimerCleanup.current?.();
+      slowTimerCleanup.current = undefined;
+    },
+    [],
+  );
+
+  const clearSlowRecovery = (): void => {
+    slowTimerCleanup.current?.();
+    slowTimerCleanup.current = undefined;
+    setSlowExtraction(false);
+    setStopAvailable(false);
   };
 
-  const openDemo = (): void => {
-    extractionRun.current += 1;
+  const startSlowTimers = (): (() => void) => {
+    const slow = window.setTimeout(() => setSlowExtraction(true), 5_000);
+    const stop = window.setTimeout(() => setStopAvailable(true), 15_000);
+
+    return () => {
+      window.clearTimeout(slow);
+      window.clearTimeout(stop);
+    };
+  };
+
+  const resetVisualConfirmations = (): void => {
     setWarningTypographyConfirmed(false);
+    setWarningLegibilityConfirmed(false);
+  };
+
+  const cancelActiveExtraction = (): void => {
+    extractionRun.current += 1;
+    extractionAbort.current?.abort();
+    extractionAbort.current = undefined;
+    clearSlowRecovery();
+  };
+
+  const resetTo = (nextView: Exclude<AppView, 'review'>): void => {
+    cancelActiveExtraction();
+    setReview(undefined);
+    resetVisualConfirmations();
+    setView(nextView);
+
+    if (nextView === 'intake' || nextView === 'batch') {
+      schedulePrewarm();
+    }
+  };
+
+  const openDemoCase = (id: DemoCaseId): void => {
+    const demoCase = demoCases.find((candidate) => candidate.id === id);
+    if (!demoCase) {
+      return;
+    }
+
+    cancelActiveExtraction();
+    resetVisualConfirmations();
     setReview({
       phase: 'ready',
-      title: oldTomDemo.title,
-      application: oldTomDemo.application,
-      extraction: asFixtureEvidence(oldTomDemo.extraction),
-      rawText: OLD_TOM_RAW_TEXT,
+      title: demoCase.title,
+      application: demoCase.application,
+      extraction: asFixtureEvidence(demoCase.extraction),
+      rawText: demoCase.rawText,
       isGuidedDemo: true,
-      imageUrl: oldTomDemo.imageUrl,
-      disclosure: oldTomDemo.disclosure,
+      imageUrl: demoCase.visual.kind === 'image' ? demoCase.visual.src : undefined,
+      imageClassName:
+        demoCase.visual.kind === 'image' ? demoCase.visual.className : undefined,
+      evidencePreview:
+        demoCase.visual.kind === 'fixture'
+          ? <DemoLabelFixture variant={demoCase.visual.variant} />
+          : undefined,
+      disclosure: demoCase.disclosure,
+      shouldFocusReviewHeading: true,
     });
     setView('review');
   };
@@ -103,9 +197,13 @@ export function App({ initialBatchItems }: AppProps) {
   const startReview = async (application: ApplicationData, file: File): Promise<void> => {
     const run = extractionRun.current + 1;
     extractionRun.current = run;
+    extractionAbort.current?.abort();
+    clearSlowRecovery();
+    const abortController = new AbortController();
+    extractionAbort.current = abortController;
     const objectUrl = previewUrlFor(file);
 
-    setWarningTypographyConfirmed(false);
+    resetVisualConfirmations();
     setReview({
       phase: 'processing',
       title: file.name,
@@ -117,6 +215,7 @@ export function App({ initialBatchItems }: AppProps) {
       progress: 0,
     });
     setView('review');
+    slowTimerCleanup.current = startSlowTimers();
 
     try {
       const output = await extractFromImage(file, ({ value }) => {
@@ -127,7 +226,7 @@ export function App({ initialBatchItems }: AppProps) {
         setReview((current) =>
           current ? { ...current, progress: value } : current,
         );
-      });
+      }, { signal: abortController.signal });
 
       if (extractionRun.current !== run) {
         return;
@@ -161,7 +260,39 @@ export function App({ initialBatchItems }: AppProps) {
             }
           : current,
       );
+    } finally {
+      if (extractionAbort.current === abortController) {
+        extractionAbort.current = undefined;
+      }
+      if (extractionRun.current === run) {
+        clearSlowRecovery();
+      }
     }
+  };
+
+  const reviewManually = (): void => {
+    extractionRun.current += 1;
+    clearSlowRecovery();
+    setReview((current) =>
+      current
+        ? {
+            ...current,
+            phase: 'ready',
+            isManualEvidence: true,
+            extraction: {},
+            rawText: '',
+            disclosure: manualEvidenceDisclosure,
+            error: undefined,
+            progress: undefined,
+            durationMs: undefined,
+          }
+        : current,
+    );
+  };
+
+  const stopAndReviewManually = (): void => {
+    extractionAbort.current?.abort();
+    reviewManually();
   };
 
   const correctCandidate = (field: CandidateField, value: string): void => {
@@ -178,7 +309,7 @@ export function App({ initialBatchItems }: AppProps) {
           ...current.extraction,
           [field]: candidate
             ? // A correction is a human-verified value: the OCR confidence no
-              // longer describes it, while the raw OCR text stays as evidence.
+              // longer describes it, while the original evidence text stays visible.
               { ...candidate, value, source: 'agent', confidence: 1 }
             : { value, rawText: '', confidence: 1, source: 'agent' },
         },
@@ -190,9 +321,10 @@ export function App({ initialBatchItems }: AppProps) {
     if (view === 'landing') {
       return (
         <Landing
-          onOpenDemo={openDemo}
+          onOpenDemoCase={openDemoCase}
           onReviewLabel={() => resetTo('intake')}
           onReviewBatch={() => resetTo('batch')}
+          onOpenBenchmark={() => resetTo('benchmark')}
         />
       );
     }
@@ -205,13 +337,21 @@ export function App({ initialBatchItems }: AppProps) {
       return <BatchQueue initialItems={initialBatchItems} />;
     }
 
+    if (view === 'benchmark') {
+      return <BenchmarkPanel onClose={() => resetTo('landing')} />;
+    }
+
     if (review) {
       const result =
         review.phase === 'ready'
           ? validateLabel({
               application: review.application,
               extraction: review.extraction,
-              flags: { warningTypographyConfirmed },
+              flags: {
+                ...emptyReviewFlags,
+                warningTypographyConfirmed,
+                warningLegibilityConfirmed,
+              },
             })
           : undefined;
 
@@ -223,24 +363,36 @@ export function App({ initialBatchItems }: AppProps) {
           phase={review.phase}
           rawText={review.rawText}
           imageUrl={review.imageUrl}
+          imageClassName={review.imageClassName}
+          evidencePreview={review.evidencePreview}
           disclosure={review.disclosure}
           error={review.error}
           progress={review.progress}
           durationMs={review.durationMs}
           isGuidedDemo={Boolean(review.isGuidedDemo)}
+          shouldFocusReviewHeading={review.shouldFocusReviewHeading}
+          shouldFocusManualDisclosure={Boolean(review.isManualEvidence)}
+          slowExtraction={slowExtraction}
+          stopAvailable={stopAvailable}
+          onManualReview={reviewManually}
+          onStopOcr={stopAndReviewManually}
           warningTypographyConfirmed={warningTypographyConfirmed}
           onWarningTypographyConfirmed={setWarningTypographyConfirmed}
+          warningLegibilityConfirmed={warningLegibilityConfirmed}
+          onWarningLegibilityConfirmed={setWarningLegibilityConfirmed}
           onCorrectCandidate={correctCandidate}
-          onStartAnother={() => resetTo('intake')}
+          exitLabel="Review another label"
+          onExit={() => resetTo('intake')}
         />
       );
     }
 
     return (
       <Landing
-        onOpenDemo={openDemo}
+        onOpenDemoCase={openDemoCase}
         onReviewLabel={() => resetTo('intake')}
         onReviewBatch={() => resetTo('batch')}
+        onOpenBenchmark={() => resetTo('benchmark')}
       />
     );
   })();

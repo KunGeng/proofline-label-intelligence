@@ -4,6 +4,13 @@ This document explains the reasoning behind the prototype: what it optimizes for
 rules it enforces, and the trade-offs it accepts. Setup, usage, and deployment live in
 the [README](../README.md).
 
+## Runtime and CI contract
+
+Local development requires Node.js 20+ with Corepack and pnpm 11.12.0. The repository
+pins the same pnpm release in `packageManager` and `engines`; GitHub Actions uses Node
+22, configures `pnpm/action-setup@v4` with `version: 11.12.0`, and installs with
+`pnpm install --frozen-lockfile`.
+
 ## Product stance
 
 TTB-style label review contains a large volume of repeatable comparison work: an agent
@@ -50,6 +57,18 @@ The extraction boundary (`ExtractFromImage`) is deliberately small so a differen
 backend — including a vision model behind an approved private endpoint — can replace the
 local adapter without touching validation or UI code.
 
+After a reviewer intentionally enters a single or batch intake, at most one local OCR worker may prewarm; no OCR work runs on page load. Prewarming uses idle-time and timer fallback scheduling. The pool remains capped at two workers, and the second is demand-created for batch work.
+
+For live OCR, field confidence is derived from matched OCR words or lines: a parsed
+candidate uses the minimum confidence of its matched contiguous word span, then the
+matching line when no exact span is available. If neither mapping is safe, it
+conservatively falls below the readable threshold rather than inheriting a page-wide
+score.
+
+The guided low-confidence scenario uses CSS-only visual degradation as a disclosed
+presentation treatment. It does not alter the live OCR input or fixture evidence, so it
+does not represent contrast, deskew, thresholding, or another OCR-preprocessing step.
+
 ### Why local OCR instead of a cloud vision model
 
 The stakeholder interviews were explicit that the agency network blocks outbound calls
@@ -64,23 +83,30 @@ network-permitted endpoint exists.
 
 ### Performance and the five-second expectation
 
-The discovery notes are blunt: results in about five seconds or agents fall back to
-reviewing by eye. Design responses:
+Five seconds is a reviewer recovery point, not a universal performance promise. Design
+responses:
 
-- OCR workers are **initialized once and reused** (max two). Worker boot, WASM
-  compilation, and language-data load are paid on the first label, not on every label.
-- Images longer than 2,000 px are downscaled before recognition.
+- Images longer than 2,000 px are downscaled before recognition. One prewarmed worker
+  may shorten initialization after deliberate intake; it does not make every first
+  extraction equivalent.
+- After five seconds, a reviewer may keep waiting or review manually. Manual mode uses
+  the original label and empty OCR candidates, and a late OCR result cannot overwrite
+  the human-led review.
+- At fifteen seconds, a reviewer may stop OCR and review manually. This is an explicit
+  reviewer action that discards the active worker; it is not an automatic timeout.
 - The UI reports **measured extraction time** per label (single review and batch rows),
   so the prototype's actual speed on the evaluator's hardware is visible rather than
   claimed. The batch progress line shows a running average and a remaining-time
   estimate.
+- The local sample benchmark fetches the shipped same-origin label and runs it twice on
+  the current device. It reports **First sample run** and **Second warm-worker run**
+  with phase timings, field coverage, and per-field confidence. It is not a universal speed guarantee or a network-cold measurement: a normal browser session may already have an initialized worker.
 - The guided demo is fixture-backed and labeled as such — it demonstrates the review
-  experience instantly without implying a live OCR timing.
+  experience without implying a live OCR timing.
 
-Local CPU recognition on an older government machine may still exceed five seconds for
-large or noisy labels. That residual risk is documented in the README's trade-offs
-section together with the mitigation path (image preprocessing, a faster engine, or
-server-side OCR in the Azure evolution).
+Local CPU recognition on an older government machine may still take longer for large or
+noisy labels. The interface exposes timing and a manual recovery path instead of
+claiming a universal sub-five-second result.
 
 ## Validation rules
 
@@ -108,22 +134,27 @@ Field-specific behavior:
   statement after whitespace normalization only; the heading must be the literal
   uppercase `GOVERNMENT WARNING:`. Typography (bold, capitalization rendering) is an
   explicit reviewer confirmation that participates in overall status until checked.
+  Warning legibility is a manual reviewer confirmation. It records the reviewer's
+  inspection of legibility, contrast, and placement; it is separate from the
+  typography check and neither is an OCR-derived pass. Exact printed type size remains a final regulatory review responsibility.
 
 ## Batch intake
 
 CSV matching is strict by design: partial application schemas are rejected rather than
 silently downgraded, duplicate filenames (in the selection or the CSV) are refused
 because a safe one-to-one match cannot be inferred, and filename-only rows run as
-extraction triage marked **Application data required** — never falsely verified. The
-queue caps at 300 files, runs through two workers, supports retry (including while the
-batch is still processing), and exports per-file results with a field-level findings
-column. Clearing a batch cancels pending work and releases object URLs; late-settling
-worker results for a cleared batch are discarded by generation tokens.
+extraction triage marked **Application data required** — never falsely verified.
+Filename-only rows remain OCR triage. CSV application facts can open a full review without rerunning OCR. The action requires an available extraction; the embedded desk preserves the batch queue and updates the same row on return. The queue caps at 300 files, runs
+through two workers, supports retry (including while the batch is still processing),
+and exports per-file results with a field-level findings column. Clearing a batch
+cancels pending work and releases object URLs; late-settling worker results for a
+cleared batch are discarded by generation tokens.
 
 ## Testing
 
-The suite (~120 tests) covers the validation rules and precedence, parser extraction,
-OCR worker lifecycle (timeout, failure, reuse), CSV schema/matching edge cases, queue
-concurrency and cancellation, export escaping and formula neutralization, UI review
-states and accessibility behaviors, and a README/template contract test that keeps the
-documentation honest. CI runs typecheck, tests, and the production build.
+The suite covers the validation rules and precedence, parser extraction, OCR worker
+lifecycle (timeout, failure, reuse), CSV schema/matching edge cases, queue concurrency
+and cancellation, export escaping and formula neutralization, UI review states and
+accessibility behaviors, and a README/template contract test that keeps the
+documentation honest. CI runs typecheck, tests, and the production build on Node 22
+with pnpm 11.12.0 and a frozen lockfile.

@@ -8,6 +8,10 @@ import {
 } from 'react';
 import type { ApplicationData } from '../domain/types';
 import { parseAbv, parseMilliliters, parseProof } from '../domain/normalize';
+import {
+  isExplicitlyOutOfScopeBeverage,
+  unsupportedBeverageMessage,
+} from '../domain/scope';
 import { ScopeNotice, SectionCard } from './ui';
 
 const ACCEPTED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
@@ -156,6 +160,22 @@ export function IntakeForm({ onCancel, onSubmit }: IntakeFormProps) {
     if (failedFormatChecks.length > 0) {
       setFormatErrors(failedFormatChecks.map(([, , message]) => message));
       reportInvalidFields(failedFormatChecks.map(([field]) => field));
+      return;
+    }
+
+    if (isExplicitlyOutOfScopeBeverage(application.classType)) {
+      setFileError(undefined);
+      setInvalidFields((current) =>
+        current.filter(
+          (invalidField) =>
+            invalidField !== 'labelImage' && invalidField !== 'countryOfOrigin',
+        ),
+      );
+      setFormatErrors((current) =>
+        current.includes(unsupportedBeverageMessage)
+          ? current
+          : [...current, unsupportedBeverageMessage],
+      );
       return;
     }
 

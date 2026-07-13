@@ -9,7 +9,8 @@ export type FieldKey =
   | 'countryOfOrigin'
   | 'warningText'
   | 'warningHeading'
-  | 'warningTypography';
+  | 'warningTypography'
+  | 'warningLegibility';
 
 export type ReviewState = 'match' | 'mismatch' | 'needs_review' | 'unreadable';
 
@@ -45,12 +46,15 @@ export interface LabelExtraction {
   warningHeading?: Candidate;
 }
 
+export interface ReviewFlags {
+  warningTypographyConfirmed: boolean;
+  warningLegibilityConfirmed: boolean;
+}
+
 export interface ValidationInput {
   application: ApplicationData;
   extraction: LabelExtraction;
-  flags: {
-    warningTypographyConfirmed: boolean;
-  };
+  flags: ReviewFlags;
 }
 
 export interface FieldResult {

@@ -2,12 +2,18 @@ import { validateLabel } from '../../domain/validation';
 import type {
   ApplicationData,
   LabelExtraction,
+  ReviewFlags,
   VerificationResult,
 } from '../../domain/types';
 import type { ExtractFromImage, ExtractionJobResult } from '../extraction/types';
 
 const MAX_SELECTED_FILES = 300;
 const MAX_CONCURRENT_WORKERS = 2;
+
+const createEmptyReviewFlags = (): ReviewFlags => ({
+  warningTypographyConfirmed: false,
+  warningLegibilityConfirmed: false,
+});
 
 interface WorkerSlotRequest {
   promise: Promise<boolean>;
@@ -38,6 +44,8 @@ export interface QueueItem {
   file: File;
   name: string;
   size: number;
+  application?: ApplicationData;
+  reviewFlags: ReviewFlags;
   status: QueueStatus;
   progress: number;
   result?: VerificationResult;
@@ -200,6 +208,8 @@ export const createReviewQueue = (
       file: job.file,
       name: job.file.name,
       size: job.file.size,
+      application: job.application,
+      reviewFlags: createEmptyReviewFlags(),
       status: 'queued',
       progress: 0,
     };
@@ -274,7 +284,7 @@ export const createReviewQueue = (
         return;
       }
 
-      if (!job.application) {
+      if (!item.application) {
         item.status = 'extracted_pending_application';
         item.progress = 1;
         return;
@@ -282,9 +292,9 @@ export const createReviewQueue = (
 
       item.status = 'validating';
       item.result = validateLabel({
-        application: job.application,
+        application: item.application,
         extraction: output.extraction,
-        flags: { warningTypographyConfirmed: false },
+        flags: item.reviewFlags,
       });
       item.status = 'ready';
       item.progress = 1;

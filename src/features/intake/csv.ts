@@ -1,5 +1,9 @@
 import type { ApplicationData } from '../../domain/types';
 import { parseAbv, parseMilliliters, parseProof } from '../../domain/normalize';
+import {
+  isExplicitlyOutOfScopeBeverage,
+  unsupportedBeverageMessage,
+} from '../../domain/scope';
 import type { QueueJob } from './queue';
 
 const CSV_HEADERS = [
@@ -346,6 +350,11 @@ export const parseBatchCsv = (csvText: string, files: File[]): CsvImportResult =
       errors.push(
         `Row ${row.line}: filename "${filename}" does not match a selected image.`,
       );
+      continue;
+    }
+
+    if (isExplicitlyOutOfScopeBeverage(values.classType ?? '')) {
+      errors.push(`Row ${row.line}: ${unsupportedBeverageMessage}`);
       continue;
     }
 

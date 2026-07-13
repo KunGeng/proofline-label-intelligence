@@ -1,6 +1,8 @@
 import type { WorkerFactory } from './ocr';
+import type { ExtractionProgress } from './types';
 import {
   createExtractFromImage,
+  createOcrEngine,
   extractFromImage,
   WORKER_INITIALIZATION_TIMEOUT_MS,
 } from './ocr';
@@ -41,6 +43,296 @@ const waitForWorkerFactory = async (
 
   throw new Error('Worker factory was not called.');
 };
+
+const waitForMockCall = async (mock: ReturnType<typeof vi.fn>): Promise<void> => {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    if (mock.mock.calls.length > 0) {
+      return;
+    }
+
+    await Promise.resolve();
+  }
+
+  throw new Error('Mock was not called.');
+};
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+describe('OCR engine facade', () => {
+  it('warms one reusable worker without recognizing an image', async () => {
+    const image = document.createElement('canvas');
+    const prepareImage = vi.fn().mockResolvedValue({
+      image,
+      thumbnailUrl: 'data:image/jpeg;base64,fixture',
+    });
+    const recognize = vi.fn().mockResolvedValue({
+      data: { text: 'OLD TOM DISTILLERY', confidence: 99, words: [], lines: [] },
+    });
+    const terminate = vi.fn().mockResolvedValue(undefined);
+    const worker = { recognize, terminate } as unknown as OcrWorker;
+    const workerFactoryMock = vi.fn().mockResolvedValue(worker);
+    const engine = createOcrEngine({
+      createWorker: workerFactoryMock as unknown as WorkerFactory,
+      prepareImage,
+    });
+
+    await engine.prewarm();
+
+    expect(workerFactoryMock).toHaveBeenCalledTimes(1);
+    expect(prepareImage).not.toHaveBeenCalled();
+    expect(recognize).not.toHaveBeenCalled();
+
+    await engine.extract(file(), vi.fn());
+
+    expect(workerFactoryMock).toHaveBeenCalledTimes(1);
+    expect(recognize).toHaveBeenCalledTimes(1);
+    expect(terminate).not.toHaveBeenCalled();
+  });
+
+  it('uses word confidence instead of page confidence and requests only needed outputs', async () => {
+    const image = document.createElement('canvas');
+    const recognize = vi.fn().mockResolvedValue({
+      data: {
+        text: '45% Alc./Vol.',
+        confidence: 99,
+        words: [
+          { text: '45%', confidence: 96 },
+          { text: 'Alc./Vol.', confidence: 62 },
+        ],
+        lines: [],
+      },
+    });
+    const worker = {
+      recognize,
+      terminate: vi.fn().mockResolvedValue(undefined),
+    } as unknown as OcrWorker;
+    const engine = createOcrEngine({
+      createWorker: vi.fn().mockResolvedValue(worker) as unknown as WorkerFactory,
+      prepareImage: vi.fn().mockResolvedValue({
+        image,
+        thumbnailUrl: 'data:image/jpeg;base64,fixture',
+      }),
+    });
+
+    const result = await engine.extract(file(), vi.fn());
+
+    expect(result.extraction.abv).toMatchObject({
+      value: '45%',
+      rawText: '45% Alc./Vol.',
+      confidence: 0.62,
+    });
+    expect(recognize).toHaveBeenCalledWith(image, {}, {
+      text: true,
+      blocks: true,
+      hocr: false,
+      tsv: false,
+    });
+  });
+
+  it('returns measured preparation, worker-wait, recognition, and total timings', async () => {
+    vi.spyOn(performance, 'now')
+      .mockReturnValueOnce(10)
+      .mockReturnValueOnce(30)
+      .mockReturnValueOnce(30)
+      .mockReturnValueOnce(50)
+      .mockReturnValueOnce(50)
+      .mockReturnValueOnce(90)
+      .mockReturnValueOnce(100);
+
+    const worker = {
+      recognize: vi.fn().mockResolvedValue({
+        data: { text: 'OLD TOM DISTILLERY', confidence: 99, words: [], lines: [] },
+      }),
+      terminate: vi.fn().mockResolvedValue(undefined),
+    } as unknown as OcrWorker;
+    const engine = createOcrEngine({
+      createWorker: vi.fn().mockResolvedValue(worker) as unknown as WorkerFactory,
+      prepareImage: preparedImage,
+    });
+
+    const result = await engine.extract(file(), vi.fn());
+
+    expect(result.timings).toEqual({
+      preparationMs: 20,
+      workerWaitMs: 20,
+      recognitionMs: 40,
+      totalMs: 90,
+    });
+    expect(result.durationMs).toBe(90);
+  });
+
+  it('settles an aborted recognition, retires its worker, and replaces it', async () => {
+    const pendingRecognition = new Promise<never>(() => undefined);
+    const abortedRecognize = vi.fn().mockReturnValue(pendingRecognition);
+    const abortedTerminate = vi.fn().mockResolvedValue(undefined);
+    const abortedWorker = {
+      recognize: abortedRecognize,
+      terminate: abortedTerminate,
+    } as unknown as OcrWorker;
+    const replacementRecognize = vi.fn().mockResolvedValue({
+      data: { text: 'OLD TOM DISTILLERY', confidence: 99, words: [], lines: [] },
+    });
+    const replacementWorker = {
+      recognize: replacementRecognize,
+      terminate: vi.fn().mockResolvedValue(undefined),
+    } as unknown as OcrWorker;
+    const workerFactoryMock = vi
+      .fn()
+      .mockResolvedValueOnce(abortedWorker)
+      .mockResolvedValueOnce(replacementWorker);
+    const engine = createOcrEngine({
+      createWorker: workerFactoryMock as unknown as WorkerFactory,
+      prepareImage: preparedImage,
+    });
+    const controller = new AbortController();
+
+    const cancelled = engine.extract(file(), vi.fn(), { signal: controller.signal });
+    await waitForMockCall(abortedRecognize);
+    controller.abort();
+
+    await expect(cancelled).resolves.toMatchObject({
+      extraction: {},
+      rawText: '',
+      error: 'cancelled',
+      source: 'ocr',
+    });
+    expect(abortedTerminate).toHaveBeenCalledTimes(1);
+
+    await engine.extract(file(), vi.fn());
+
+    expect(workerFactoryMock).toHaveBeenCalledTimes(2);
+    expect(replacementRecognize).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancels pending initialization and terminates the worker if it completes late', async () => {
+    const pendingWorker = deferred<OcrWorker>();
+    const lateTerminate = vi.fn().mockResolvedValue(undefined);
+    const lateWorker = { terminate: lateTerminate } as unknown as OcrWorker;
+    const replacementRecognize = vi.fn().mockResolvedValue({
+      data: { text: 'OLD TOM DISTILLERY', confidence: 99, words: [], lines: [] },
+    });
+    const replacementWorker = {
+      recognize: replacementRecognize,
+      terminate: vi.fn().mockResolvedValue(undefined),
+    } as unknown as OcrWorker;
+    const workerFactoryMock = vi
+      .fn()
+      .mockReturnValueOnce(pendingWorker.promise)
+      .mockResolvedValueOnce(replacementWorker);
+    const engine = createOcrEngine({
+      createWorker: workerFactoryMock as unknown as WorkerFactory,
+      prepareImage: preparedImage,
+    });
+    const controller = new AbortController();
+
+    const cancelled = engine.extract(file(), vi.fn(), { signal: controller.signal });
+    await waitForWorkerFactory(workerFactoryMock);
+    controller.abort();
+
+    await expect(cancelled).resolves.toMatchObject({
+      error: 'cancelled',
+      source: 'ocr',
+    });
+
+    pendingWorker.resolve(lateWorker);
+    await waitForMockCall(lateTerminate);
+
+    await engine.extract(file(), vi.fn());
+
+    expect(lateTerminate).toHaveBeenCalledTimes(1);
+    expect(workerFactoryMock).toHaveBeenCalledTimes(2);
+    expect(replacementRecognize).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns cancelled when validating progress aborts the extraction', async () => {
+    const terminate = vi.fn().mockResolvedValue(undefined);
+    const worker = {
+      recognize: vi.fn().mockResolvedValue({
+        data: { text: 'OLD TOM DISTILLERY', confidence: 99, words: [], lines: [] },
+      }),
+      terminate,
+    } as unknown as OcrWorker;
+    const engine = createOcrEngine({
+      createWorker: vi.fn().mockResolvedValue(worker) as unknown as WorkerFactory,
+      prepareImage: preparedImage,
+    });
+    const controller = new AbortController();
+    const onProgress = vi.fn((event: ExtractionProgress) => {
+      if (event.phase === 'validating') {
+        controller.abort();
+      }
+    });
+
+    const result = await engine.extract(file(), onProgress, { signal: controller.signal });
+
+    expect(result).toMatchObject({
+      error: 'cancelled',
+      source: 'ocr',
+    });
+    expect(terminate).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops reporting progress after an aborted initialization', async () => {
+    const pendingWorker = deferred<OcrWorker>();
+    const lateTerminate = vi.fn().mockResolvedValue(undefined);
+    const lateWorker = { terminate: lateTerminate } as unknown as OcrWorker;
+    const workerFactoryMock = vi.fn().mockReturnValue(pendingWorker.promise);
+    const engine = createOcrEngine({
+      createWorker: workerFactoryMock as unknown as WorkerFactory,
+      prepareImage: preparedImage,
+    });
+    const controller = new AbortController();
+    const onProgress = vi.fn();
+
+    const cancelled = engine.extract(file(), onProgress, { signal: controller.signal });
+    await waitForWorkerFactory(workerFactoryMock);
+    const logger = workerFactoryMock.mock.calls[0]?.[2]?.logger;
+
+    expect(logger).toEqual(expect.any(Function));
+
+    try {
+      controller.abort();
+      await expect(cancelled).resolves.toMatchObject({ error: 'cancelled' });
+      const callsAfterCancellation = onProgress.mock.calls.length;
+
+      logger?.({ status: 'recognizing text', progress: 0.5 });
+
+      expect(onProgress).toHaveBeenCalledTimes(callsAfterCancellation);
+    } finally {
+      pendingWorker.resolve(lateWorker);
+      await waitForMockCall(lateTerminate);
+    }
+  });
+
+  it('settles a cancelled extraction while image preparation remains pending', async () => {
+    const pendingPreparation = new Promise<Awaited<ReturnType<typeof preparedImage>>>(
+      () => undefined,
+    );
+    const prepareImage = vi.fn().mockReturnValue(pendingPreparation);
+    const workerFactoryMock = vi.fn();
+    const engine = createOcrEngine({
+      createWorker: workerFactoryMock as unknown as WorkerFactory,
+      prepareImage,
+    });
+    const controller = new AbortController();
+
+    const cancelled = engine.extract(file(), vi.fn(), { signal: controller.signal });
+    await waitForMockCall(prepareImage);
+    const completion = vi.fn();
+    void cancelled.then(completion);
+    controller.abort();
+
+    await waitForMockCall(completion);
+
+    expect(completion).toHaveBeenCalledWith(expect.objectContaining({
+      error: 'cancelled',
+      source: 'ocr',
+    }));
+    expect(workerFactoryMock).not.toHaveBeenCalled();
+  });
+});
 
 describe('extractFromImage worker initialization', () => {
   it('times out pending workers, releases both slots, and terminates late workers', async () => {

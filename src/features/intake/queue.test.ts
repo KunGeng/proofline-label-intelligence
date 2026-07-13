@@ -212,6 +212,25 @@ describe('createReviewQueue', () => {
     });
   });
 
+  it('retains batch application data and empty review flags for a ready item', async () => {
+    const job = {
+      id: 'retained-application',
+      file: file('retained-application.png'),
+      application,
+    };
+    const queue = createReviewQueue([job], async () => successfulResult(), 1);
+
+    await queue.start();
+
+    expect(queue.items[0]).toMatchObject({
+      application: job.application,
+      reviewFlags: {
+        warningTypographyConfirmed: false,
+        warningLegibilityConfirmed: false,
+      },
+    });
+  });
+
   it('keeps worker-returned errors truthful and skips validation', async () => {
     const queue = createReviewQueue(
       [{ id: 'unreadable', file: file('unreadable.png'), application }],
