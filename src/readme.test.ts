@@ -59,6 +59,26 @@ describe('submission documentation', () => {
     expect(packageJson.scripts?.preview).toContain('vite preview');
   });
 
+  it('defines reproducible AWS Amplify static-host settings', async () => {
+    const [amplify, packageText] = await Promise.all([
+      readFile('amplify.yml', 'utf8'),
+      readFile('package.json', 'utf8'),
+    ]);
+    const packageJson = JSON.parse(packageText) as {
+      packageManager?: string;
+      scripts?: Record<string, string>;
+    };
+
+    expect(packageJson.packageManager).toBe('pnpm@11.12.0');
+    expect(packageJson.scripts?.build).toContain('scripts/prepare-sites-worker.mjs');
+    expect(amplify).toMatch(/nvm use 22/);
+    expect(amplify).toMatch(/corepack enable/);
+    expect(amplify).toMatch(/pnpm install --frozen-lockfile/);
+    expect(amplify).toMatch(/pnpm build/);
+    expect(amplify).toMatch(/baseDirectory:\s*dist\/client/);
+    expect(amplify).toMatch(/files:\s*\n\s*- '\*\*\/\*'/);
+  });
+
   it('distinguishes the existing public prototype from a source revision awaiting release', async () => {
     const readme = await readFile('README.md', 'utf8');
 
