@@ -1,4 +1,7 @@
 import type { Candidate, LabelExtraction } from '../../domain/types';
+import type { CandidateConfidenceResolver } from './confidence';
+
+export type { CandidateConfidenceResolver } from './confidence';
 
 const normalizeWhitespace = (value: string): string => value.replace(/\s+/g, ' ').trim();
 
@@ -9,7 +12,8 @@ const abvPattern =
 const proofPattern = /\(?\s*(\d{1,3}(?:\.\d+)?)\s*proof\s*\)?/i;
 const netContentsPattern =
   /\b(\d{1,4}(?:\.\d+)?\s*(?:mL|L|fl\.?\s*oz\.?))\b/i;
-const producerPattern = /(?:bottled|distilled|produced)\s+by\s+([^\r\n]+)/i;
+const producerStartPattern =
+  /^(?:(?:bottled|distilled|produced|imported|manufactured)\s+by|importer\s*:?)\s*/i;
 const producerOrImporterPattern =
   /\b(?:bottled|distilled|produced|imported|manufactured)\s+by\b|\bimporter\b/i;
 const countryOfOriginPattern =
@@ -18,14 +22,19 @@ const warningHeadingPattern = /\b(government\s+warning:)/i;
 const warningBodyPattern = /\(\s*1\s*\)[\s\S]*?health\s+problems\s*\./i;
 const displayLinePattern = /^[A-Z][A-Z0-9 &'.,-]*$/;
 
+const confidenceFor = (
+  rawEvidence: string,
+  confidence: number | CandidateConfidenceResolver,
+): number => (typeof confidence === 'function' ? confidence(rawEvidence) : confidence);
+
 const candidate = (
   value: string,
   rawText: string,
-  confidence: number,
+  confidence: number | CandidateConfidenceResolver,
 ): Candidate => ({
   value: normalizeWhitespace(value),
   rawText,
-  confidence,
+  confidence: confidenceFor(rawText, confidence),
   source: 'ocr',
 });
 
@@ -43,6 +52,24 @@ const isMandatoryLine = (line: string): boolean =>
   producerOrImporterPattern.test(line) ||
   countryOfOriginPattern.test(line) ||
   warningHeadingPattern.test(line);
+
+const addressBlockFor = (rawText: string): string | undefined => {
+  const lines = rawText.split(/\r?\n/);
+  const start = lines.findIndex((line) => producerStartPattern.test(line.trim()));
+  if (start < 0) {
+    return undefined;
+  }
+
+  const captured = [lines[start]];
+  for (const line of lines.slice(start + 1, start + 3)) {
+    const normalizedLine = line.trim();
+    if (!normalizedLine || isMandatoryLine(normalizedLine)) {
+      break;
+    }
+    captured.push(line);
+  }
+  return captured.join('\n');
+};
 
 const findBrandName = (rawText: string): string | undefined => {
   const lines = rawText
@@ -62,7 +89,7 @@ const findBrandName = (rawText: string): string | undefined => {
 
 export const extractFromText = (
   rawText: string,
-  confidence: number,
+  confidence: number | CandidateConfidenceResolver,
 ): LabelExtraction => {
   const extraction: LabelExtraction = {};
   const brandName = findBrandName(rawText);
@@ -70,7 +97,7 @@ export const extractFromText = (
   const abvMatch = rawText.match(abvPattern);
   const proofMatch = rawText.match(proofPattern);
   const netContentsMatch = rawText.match(netContentsPattern);
-  const producerMatch = rawText.match(producerPattern);
+  const producerAddress = addressBlockFor(rawText);
   const countryOfOriginMatch = rawText.match(countryOfOriginPattern);
   const warningHeadingMatch = rawText.match(warningHeadingPattern);
 
@@ -99,10 +126,10 @@ export const extractFromText = (
     extraction.netContents = candidate(value, netContentsMatch[0], confidence);
   }
 
-  if (producerMatch) {
+  if (producerAddress) {
     extraction.producerAddress = candidate(
-      producerMatch[1].replace(/[.\s]+$/, ''),
-      producerMatch[0],
+      normalizeWhitespace(producerAddress).replace(producerStartPattern, ''),
+      producerAddress,
       confidence,
     );
   }

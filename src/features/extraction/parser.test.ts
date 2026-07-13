@@ -1,5 +1,6 @@
 import { CANONICAL_WARNING_BODY } from '../../domain/constants';
 import { OLD_TOM_RAW_TEXT } from '../demo/cases';
+import { createCandidateConfidenceResolver } from './confidence';
 import { extractFromText } from './parser';
 
 describe('extractFromText', () => {
@@ -28,6 +29,61 @@ GOVERNMENT WARNING: ${CANONICAL_WARNING_BODY}`,
     );
 
     expect(extraction.brandName?.value).toBe("MAKER'S MARK");
+  });
+
+  it('captures a wrapped importer address without swallowing warning text', () => {
+    const extraction = extractFromText(`IMPORTED BY Harbor Imports
+12 Wharf Street
+Boston, MA 02110
+GOVERNMENT WARNING: ${CANONICAL_WARNING_BODY}`, 0.96);
+
+    expect(extraction.producerAddress).toMatchObject({
+      value: 'Harbor Imports 12 Wharf Street Boston, MA 02110',
+      rawText: 'IMPORTED BY Harbor Imports\n12 Wharf Street\nBoston, MA 02110',
+    });
+  });
+
+  it('stops an address block before an immediately following mandatory line', () => {
+    const extraction = extractFromText(
+      `IMPORTED BY Harbor Imports
+GOVERNMENT WARNING: ${CANONICAL_WARNING_BODY}`,
+      0.96,
+    );
+
+    expect(extraction.producerAddress).toMatchObject({
+      value: 'Harbor Imports',
+      rawText: 'IMPORTED BY Harbor Imports',
+    });
+  });
+
+  it('preserves captured address evidence while normalizing only its value', () => {
+    const rawText = [
+      '  IMPORTER: Harbor Imports  ',
+      '  12 Wharf St.  ',
+      `GOVERNMENT WARNING: ${CANONICAL_WARNING_BODY}`,
+    ].join('\n');
+    const extraction = extractFromText(rawText, 0.96);
+
+    expect(extraction.producerAddress).toMatchObject({
+      value: 'Harbor Imports 12 Wharf St.',
+      rawText: '  IMPORTER: Harbor Imports  \n  12 Wharf St.  ',
+    });
+  });
+
+  it('uses the resolver against a candidate’s raw OCR evidence', () => {
+    const extraction = extractFromText(
+      '45% Alc./Vol.',
+      createCandidateConfidenceResolver(
+        [{ text: '45%', confidence: 96 }, { text: 'Alc./Vol.', confidence: 62 }],
+        [],
+      ),
+    );
+
+    expect(extraction.abv).toMatchObject({
+      value: '45%',
+      rawText: '45% Alc./Vol',
+      confidence: 0.62,
+    });
   });
 
   it('retains a malformed warning heading as an observed candidate for validation', () => {
