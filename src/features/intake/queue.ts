@@ -2,12 +2,18 @@ import { validateLabel } from '../../domain/validation';
 import type {
   ApplicationData,
   LabelExtraction,
+  ReviewFlags,
   VerificationResult,
 } from '../../domain/types';
 import type { ExtractFromImage, ExtractionJobResult } from '../extraction/types';
 
 const MAX_SELECTED_FILES = 300;
 const MAX_CONCURRENT_WORKERS = 2;
+
+const emptyReviewFlags: ReviewFlags = {
+  warningTypographyConfirmed: false,
+  warningLegibilityConfirmed: false,
+};
 
 interface WorkerSlotRequest {
   promise: Promise<boolean>;
@@ -284,7 +290,7 @@ export const createReviewQueue = (
       item.result = validateLabel({
         application: job.application,
         extraction: output.extraction,
-        flags: { warningTypographyConfirmed: false },
+        flags: emptyReviewFlags,
       });
       item.status = 'ready';
       item.progress = 1;

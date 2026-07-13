@@ -381,10 +381,31 @@ const warningTypographyField = (confirmed: boolean): FieldResult => ({
     : 'Warning typography requires explicit agent confirmation.',
 });
 
+const warningLegibilityField = (confirmed: boolean): FieldResult => ({
+  field: 'warningLegibility',
+  state: confirmed ? 'match' : 'needs_review',
+  expected: 'Agent confirmation required',
+  observed: confirmed ? 'Agent-confirmed' : 'Awaiting agent confirmation',
+  reason: confirmed
+    ? 'An agent reviewed warning legibility, contrast, and placement.'
+    : 'Warning legibility, contrast, and placement require explicit agent confirmation.',
+});
+
 const countryOfOriginField = (
   input: ValidationInput,
 ): FieldResult => {
   if (!input.application.isImported) {
+    const originState = candidateState(input.extraction.countryOfOrigin);
+    if (originState !== 'unreadable') {
+      return withCandidate(
+        'countryOfOrigin',
+        'needs_review',
+        'Domestic product declared',
+        input.extraction.countryOfOrigin,
+        'Readable origin evidence may conflict with the domestic declaration; verify import status.',
+      );
+    }
+
     return withCandidate(
       'countryOfOrigin',
       'match',
@@ -463,6 +484,7 @@ export const validateLabel = (input: ValidationInput): VerificationResult => {
     warningBodyField(extraction.warningText),
     warningHeadingField(extraction.warningHeading),
     warningTypographyField(flags.warningTypographyConfirmed),
+    warningLegibilityField(flags.warningLegibilityConfirmed),
   ];
 
   return { fields, overallState: overallState(fields) };

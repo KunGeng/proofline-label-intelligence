@@ -8,6 +8,10 @@ import {
 } from 'react';
 import type { ApplicationData } from '../domain/types';
 import { parseAbv, parseMilliliters, parseProof } from '../domain/normalize';
+import {
+  isExplicitlyOutOfScopeBeverage,
+  unsupportedBeverageMessage,
+} from '../domain/scope';
 import { ScopeNotice, SectionCard } from './ui';
 
 const ACCEPTED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
@@ -167,6 +171,15 @@ export function IntakeForm({ onCancel, onSubmit }: IntakeFormProps) {
 
     if (application.isImported && !application.countryOfOrigin?.trim()) {
       reportInvalidFields(['countryOfOrigin']);
+      return;
+    }
+
+    if (isExplicitlyOutOfScopeBeverage(application.classType)) {
+      setFormatErrors((current) =>
+        current.includes(unsupportedBeverageMessage)
+          ? current
+          : [...current, unsupportedBeverageMessage],
+      );
       return;
     }
 

@@ -19,7 +19,9 @@ export type CandidateField = keyof LabelExtraction;
 export type ReviewDeskPhase = 'processing' | 'error' | 'ready';
 
 const isCandidateField = (field: FieldKey): field is CandidateField =>
-  field !== 'warningTypography' && field !== 'abvProofConsistency';
+  field !== 'warningTypography' &&
+  field !== 'warningLegibility' &&
+  field !== 'abvProofConsistency';
 
 interface ReviewDeskProps {
   title: string;

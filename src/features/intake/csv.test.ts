@@ -1,4 +1,5 @@
 import { parseBatchCsv } from './csv';
+import { unsupportedBeverageMessage } from '../../domain/scope';
 
 const file = (name: string, type = 'image/png') =>
   new File(['label'], name, { type });
@@ -67,6 +68,19 @@ describe('parseBatchCsv', () => {
         isImported: false,
       },
     });
+  });
+
+  it('rejects explicitly out-of-scope beverage rows before creating a queue job', () => {
+    const result = parseBatchCsv(
+      applicationCsv(
+        'old-tom.png,OLD TOM,wine,45%,90 Proof,750 mL,Example KY,false,',
+      ),
+      [file('old-tom.png')],
+    );
+
+    expect(result.errors).toContain(`Row 2: ${unsupportedBeverageMessage}`);
+    expect(result.matched).toHaveLength(0);
+    expect(result.unmatchedFiles.map((item) => item.name)).toEqual(['old-tom.png']);
   });
 
   it('associates each application with its normalized filename rather than selection order', () => {

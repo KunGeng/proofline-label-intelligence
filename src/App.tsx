@@ -5,7 +5,7 @@ import { IntakeForm } from './components/IntakeForm';
 import { Landing } from './components/Landing';
 import { ReviewDesk, type CandidateField } from './components/ReviewDesk';
 import { validateLabel } from './domain/validation';
-import type { ApplicationData, LabelExtraction } from './domain/types';
+import type { ApplicationData, LabelExtraction, ReviewFlags } from './domain/types';
 import { oldTomDemo, OLD_TOM_RAW_TEXT } from './features/demo/cases';
 import { extractFromImage } from './features/extraction/ocr';
 import type { QueueItem } from './features/intake/queue';
@@ -53,6 +53,11 @@ const previewUrlFor = (file: File): string | undefined => {
   } catch {
     return undefined;
   }
+};
+
+const emptyReviewFlags: ReviewFlags = {
+  warningTypographyConfirmed: false,
+  warningLegibilityConfirmed: false,
 };
 
 interface AppProps {
@@ -211,7 +216,10 @@ export function App({ initialBatchItems }: AppProps) {
           ? validateLabel({
               application: review.application,
               extraction: review.extraction,
-              flags: { warningTypographyConfirmed },
+              flags: {
+                ...emptyReviewFlags,
+                warningTypographyConfirmed,
+              },
             })
           : undefined;
 

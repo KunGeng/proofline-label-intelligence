@@ -30,9 +30,17 @@ const candidate = (
   source: Candidate['source'] = 'fixture',
 ): Candidate => ({ value, rawText: value, confidence, source });
 
+const confirmedReviewFlags = {
+  warningTypographyConfirmed: true,
+  warningLegibilityConfirmed: true,
+};
+
 const fixture = (
   overrides: Partial<LabelExtraction> = {},
-  flags = { warningTypographyConfirmed: false },
+  flags = {
+    warningTypographyConfirmed: false,
+    warningLegibilityConfirmed: false,
+  },
   applicationOverrides: Partial<ValidationInput['application']> = {},
 ): ValidationInput => ({
   application: {
@@ -65,6 +73,7 @@ const byField = (result: VerificationResult, field: FieldKey) =>
 describe('normalization helpers', () => {
   it('normalizes only the supported textual variations', () => {
     expect(fieldLabel('warningHeading')).toBe('Warning heading');
+    expect(fieldLabel('warningLegibility')).toBe('Warning legibility');
     expect(fieldLabel('abvProofConsistency')).toBe('ABV/proof consistency');
     expect(canonicalizeText(" Stone’s-Throw, LLC. ")).toBe('stones throw llc');
     expect(canonicalizeText('ＦＯＯ')).not.toBe(canonicalizeText('foo'));
@@ -84,7 +93,7 @@ describe('normalization helpers', () => {
 });
 
 describe('validateLabel', () => {
-  it('returns a match for an exact baseline label except unconfirmed typography', () => {
+  it('returns field matches for an exact baseline label except unconfirmed visual checks', () => {
     const result = validateLabel(fixture());
 
     expect(byField(result, 'brandName')).toMatchObject({ state: 'match' });
@@ -97,6 +106,9 @@ describe('validateLabel', () => {
       expected: CANONICAL_WARNING_HEADING,
     });
     expect(byField(result, 'warningTypography')).toMatchObject({
+      state: 'needs_review',
+    });
+    expect(byField(result, 'warningLegibility')).toMatchObject({
       state: 'needs_review',
     });
     expect(result.overallState).toBe('needs_review');
@@ -163,7 +175,7 @@ describe('validateLabel', () => {
     const result = validateLabel(
       fixture(
         { proof: candidate('80 Proof') },
-        { warningTypographyConfirmed: true },
+        confirmedReviewFlags,
         { proof: '80' },
       ),
     );
@@ -180,21 +192,21 @@ describe('validateLabel', () => {
     const smallVariance = validateLabel(
       fixture(
         { proof: candidate('89.5 Proof') },
-        { warningTypographyConfirmed: true },
+        confirmedReviewFlags,
         { proof: '89.5' },
       ),
     );
     const lowerConfidence = validateLabel(
       fixture(
         { proof: candidate('80 Proof', 0.72) },
-        { warningTypographyConfirmed: true },
+        confirmedReviewFlags,
         { proof: '80' },
       ),
     );
     const fractionalVariance = validateLabel(
       fixture(
         { proof: candidate('89.995 Proof') },
-        { warningTypographyConfirmed: true },
+        confirmedReviewFlags,
         { proof: '89.995' },
       ),
     );
@@ -214,7 +226,7 @@ describe('validateLabel', () => {
     const result = validateLabel(
       fixture(
         { proof: undefined },
-        { warningTypographyConfirmed: true },
+        confirmedReviewFlags,
         { proof: undefined },
       ),
     );
@@ -229,26 +241,31 @@ describe('validateLabel', () => {
     expect(byField(result, 'netContents')).toMatchObject({ state: 'match' });
   });
 
-  it('requires an origin for imported products and ignores it for domestic products', () => {
+  it('requires an origin for imported products', () => {
     const imported = validateLabel(
       fixture(
         { countryOfOrigin: candidate('Scotland') },
-        { warningTypographyConfirmed: true },
+        confirmedReviewFlags,
         { isImported: true, countryOfOrigin: 'Scotland' },
-      ),
-    );
-    const domestic = validateLabel(
-      fixture(
-        { countryOfOrigin: candidate('Scotland') },
-        { warningTypographyConfirmed: true },
       ),
     );
 
     expect(byField(imported, 'countryOfOrigin')).toMatchObject({
       state: 'match',
     });
-    expect(byField(domestic, 'countryOfOrigin')).toMatchObject({
-      state: 'match',
+  });
+
+  it('routes readable foreign origin evidence on a domestic declaration to review', () => {
+    const result = validateLabel(
+      fixture(
+        { countryOfOrigin: candidate('Scotland', 0.96) },
+        confirmedReviewFlags,
+      ),
+    );
+
+    expect(byField(result, 'countryOfOrigin')).toMatchObject({
+      state: 'needs_review',
+      expected: 'Domestic product declared',
     });
   });
 
@@ -256,7 +273,7 @@ describe('validateLabel', () => {
     const result = validateLabel(
       fixture(
         {},
-        { warningTypographyConfirmed: true },
+        confirmedReviewFlags,
         { isImported: true, countryOfOrigin: 'Scotland' },
       ),
     );
@@ -270,7 +287,7 @@ describe('validateLabel', () => {
     const result = validateLabel(
       fixture(
         {},
-        { warningTypographyConfirmed: true },
+        confirmedReviewFlags,
         { isImported: true, countryOfOrigin: '' },
       ),
     );
@@ -327,7 +344,7 @@ describe('validateLabel', () => {
           warningText: parsed.warningText,
           warningHeading: parsed.warningHeading,
         },
-        { warningTypographyConfirmed: true },
+        confirmedReviewFlags,
       ),
     );
 
@@ -341,10 +358,21 @@ describe('validateLabel', () => {
     );
     expect(
       byField(
-        validateLabel(fixture({}, { warningTypographyConfirmed: true })),
+        validateLabel(fixture({}, confirmedReviewFlags)),
         'warningTypography',
       ).state,
     ).toBe('match');
+  });
+
+  it('requires a separate warning-legibility confirmation', () => {
+    const result = validateLabel(fixture({}, {
+      warningTypographyConfirmed: true,
+      warningLegibilityConfirmed: false,
+    }));
+
+    expect(byField(result, 'warningLegibility')).toMatchObject({
+      state: 'needs_review',
+    });
   });
 
   it('returns mismatch before unreadable and review states', () => {

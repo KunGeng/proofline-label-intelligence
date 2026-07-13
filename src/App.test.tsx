@@ -395,10 +395,10 @@ it('orients the fixture-backed demo around the next three review actions', async
   );
 
   expect(
-    screen.getByText('No discrepancies detected — agent approval required.'),
+    screen.getByText('Evidence is available, but an agent review is still required.'),
   ).toBeInTheDocument();
   expect(
-    screen.getByRole('heading', { name: /no discrepancies detected/i }),
+    screen.getByRole('heading', { name: /needs review/i }),
   ).toBeInTheDocument();
 });
 
@@ -645,6 +645,39 @@ it('explains unsupported application number formats before extraction begins', a
   await user.click(screen.getByRole('button', { name: /start evidence review/i }));
 
   expect(await screen.findByRole('table')).toBeInTheDocument();
+});
+
+it('blocks explicitly out-of-scope beverages before extraction begins', async () => {
+  const user = userEvent.setup();
+  vi.mocked(extractFromImage).mockResolvedValueOnce({
+    extraction: {},
+    rawText: '',
+    source: 'ocr',
+  });
+  render(<App />);
+
+  await user.click(screen.getByRole('button', { name: /review a label/i }));
+  await user.type(screen.getByRole('textbox', { name: /^brand name$/i }), 'Old Tom');
+  await user.type(screen.getByRole('textbox', { name: /class\/type/i }), 'wine');
+  await user.type(screen.getByRole('textbox', { name: /alcohol by volume/i }), '45%');
+  await user.type(screen.getByRole('textbox', { name: /net contents/i }), '750 mL');
+  await user.type(screen.getByRole('textbox', { name: /producer address/i }), 'Old Tom, KY');
+  await user.upload(
+    screen.getByLabelText(/^choose label image$/i),
+    new File(['label'], 'wine.png', { type: 'image/png' }),
+  );
+
+  await user.click(screen.getByRole('button', { name: /start evidence review/i }));
+  await user.click(screen.getByRole('button', { name: /start evidence review/i }));
+
+  const scopeError = screen.getByRole('alert');
+  expect(scopeError).toHaveTextContent(
+    /proofline is limited to u\.s\. distilled-spirit labels/i,
+  );
+  expect(
+    scopeError.textContent?.match(/Proofline is limited to U\.S\. distilled-spirit labels\./g),
+  ).toHaveLength(1);
+  expect(extractFromImage).not.toHaveBeenCalled();
 });
 
 it('keeps the reviewer informed when OCR rejects unexpectedly', async () => {
