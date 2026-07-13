@@ -58,4 +58,55 @@ describe('submission documentation', () => {
 
     expect(packageJson.scripts?.preview).toContain('vite preview');
   });
+
+  it('aligns the documented local-review contract with package metadata and CI', async () => {
+    const [readme, design, packageText, workflow] = await Promise.all([
+      readFile('README.md', 'utf8'),
+      readFile('docs/DESIGN.md', 'utf8'),
+      readFile('package.json', 'utf8'),
+      readFile('.github/workflows/ci.yml', 'utf8'),
+    ]);
+    const packageJson = JSON.parse(packageText) as {
+      packageManager?: string;
+      engines?: Record<string, string>;
+    };
+
+    expect(packageJson.packageManager).toBe('pnpm@11.12.0');
+    expect(packageJson.engines).toMatchObject({ node: '>=20', pnpm: '11.12.0' });
+    expect(readme).toContain('Node.js 20+ with Corepack and pnpm 11.12.0');
+    expect(design).toContain('Node.js 20+ with Corepack and pnpm 11.12.0');
+    expect(workflow).toMatch(
+      /uses:\s*pnpm\/action-setup@v4\s*\n\s*with:\s*\n\s*version:\s*11\.12\.0/,
+    );
+    expect(workflow).toMatch(/node-version:\s*22/);
+    expect(workflow).toContain('pnpm install --frozen-lockfile');
+
+    expect(readme).toContain('After a reviewer intentionally enters a single or batch intake, at most one local OCR worker may prewarm; no OCR work runs on page load.');
+    expect(readme).toContain('matched OCR words or lines');
+    expect(readme).toContain('conservatively falls below the readable threshold');
+    expect(readme).toContain('After five seconds, a reviewer may keep waiting or review manually.');
+    expect(readme).toContain('At fifteen seconds, a reviewer may stop OCR and review manually.');
+    expect(readme).toContain('CSV application facts can open a full review without rerunning OCR.');
+    expect(readme).toContain('Filename-only rows remain OCR triage.');
+    expect(readme).toContain('First sample run');
+    expect(readme).toContain('Second warm-worker run');
+    expect(readme).toContain('not a universal speed guarantee or a network-cold measurement');
+    expect(readme).toContain('Warning legibility is a manual reviewer confirmation.');
+    expect(readme).toContain('Exact printed type size remains a final regulatory review responsibility.');
+    expect(readme).toContain('CSS-only visual degradation');
+
+    expect(design).toContain('After a reviewer intentionally enters a single or batch intake, at most one local OCR worker may prewarm; no OCR work runs on page load.');
+    expect(design).toContain('matched OCR words or lines');
+    expect(design).toContain('conservatively falls below the readable threshold');
+    expect(design).toContain('After five seconds, a reviewer may keep waiting or review manually.');
+    expect(design).toContain('At fifteen seconds, a reviewer may stop OCR and review manually.');
+    expect(design).toContain('CSV application facts can open a full review without rerunning OCR.');
+    expect(design).toContain('Filename-only rows remain OCR triage.');
+    expect(design).toContain('First sample run');
+    expect(design).toContain('Second warm-worker run');
+    expect(design).toContain('not a universal speed guarantee or a network-cold measurement');
+    expect(design).toContain('Warning legibility is a manual reviewer confirmation.');
+    expect(design).toContain('Exact printed type size remains a final regulatory review responsibility.');
+    expect(design).toContain('CSS-only visual degradation');
+  });
 });
