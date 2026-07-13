@@ -163,6 +163,15 @@ export function IntakeForm({ onCancel, onSubmit }: IntakeFormProps) {
       return;
     }
 
+    if (isExplicitlyOutOfScopeBeverage(application.classType)) {
+      setFormatErrors((current) =>
+        current.includes(unsupportedBeverageMessage)
+          ? current
+          : [...current, unsupportedBeverageMessage],
+      );
+      return;
+    }
+
     if (!file) {
       setFileError('Choose a JPEG, PNG, or WebP label image to begin review.');
       reportInvalidFields(['labelImage']);
@@ -171,15 +180,6 @@ export function IntakeForm({ onCancel, onSubmit }: IntakeFormProps) {
 
     if (application.isImported && !application.countryOfOrigin?.trim()) {
       reportInvalidFields(['countryOfOrigin']);
-      return;
-    }
-
-    if (isExplicitlyOutOfScopeBeverage(application.classType)) {
-      setFormatErrors((current) =>
-        current.includes(unsupportedBeverageMessage)
-          ? current
-          : [...current, unsupportedBeverageMessage],
-      );
       return;
     }
 

@@ -1418,6 +1418,50 @@ it('blocks explicitly out-of-scope beverages before extraction begins', async ()
   expect(extractFromImage).not.toHaveBeenCalled();
 });
 
+it('reports an out-of-scope beverage before requiring a label image', async () => {
+  const user = userEvent.setup();
+  render(<App />);
+
+  await user.click(screen.getByRole('button', { name: /review a label/i }));
+  await user.type(screen.getByRole('textbox', { name: /^brand name$/i }), 'Old Tom');
+  await user.type(screen.getByRole('textbox', { name: /class\/type/i }), 'Wine');
+  await user.type(screen.getByRole('textbox', { name: /alcohol by volume/i }), '45%');
+  await user.type(screen.getByRole('textbox', { name: /net contents/i }), '750 mL');
+  await user.type(screen.getByRole('textbox', { name: /producer address/i }), 'Old Tom, KY');
+
+  await user.click(screen.getByRole('button', { name: /start evidence review/i }));
+
+  const scopeError = screen.getByRole('alert');
+  expect(scopeError).toHaveTextContent(
+    /proofline is limited to u\.s\. distilled-spirit labels/i,
+  );
+  expect(scopeError).not.toHaveTextContent(/choose a jpeg, png, or webp label image/i);
+  expect(extractFromImage).not.toHaveBeenCalled();
+});
+
+it('reports an out-of-scope imported beverage before image or origin validation', async () => {
+  const user = userEvent.setup();
+  render(<App />);
+
+  await user.click(screen.getByRole('button', { name: /review a label/i }));
+  await user.type(screen.getByRole('textbox', { name: /^brand name$/i }), 'Old Tom');
+  await user.type(screen.getByRole('textbox', { name: /class\/type/i }), 'Wine');
+  await user.type(screen.getByRole('textbox', { name: /alcohol by volume/i }), '45%');
+  await user.type(screen.getByRole('textbox', { name: /net contents/i }), '750 mL');
+  await user.type(screen.getByRole('textbox', { name: /producer address/i }), 'Old Tom, KY');
+  await user.click(screen.getByRole('checkbox', { name: /imported product/i }));
+
+  await user.click(screen.getByRole('button', { name: /start evidence review/i }));
+
+  const scopeError = screen.getByRole('alert');
+  expect(scopeError).toHaveTextContent(
+    /proofline is limited to u\.s\. distilled-spirit labels/i,
+  );
+  expect(scopeError).not.toHaveTextContent(/choose a jpeg, png, or webp label image/i);
+  expect(scopeError).not.toHaveTextContent(/country of origin is required/i);
+  expect(extractFromImage).not.toHaveBeenCalled();
+});
+
 it('keeps the reviewer informed when OCR rejects unexpectedly', async () => {
   const user = userEvent.setup();
   vi.mocked(extractFromImage).mockRejectedValueOnce(new Error('worker failed'));
