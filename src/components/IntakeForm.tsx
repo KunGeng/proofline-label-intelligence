@@ -164,6 +164,13 @@ export function IntakeForm({ onCancel, onSubmit }: IntakeFormProps) {
     }
 
     if (isExplicitlyOutOfScopeBeverage(application.classType)) {
+      setFileError(undefined);
+      setInvalidFields((current) =>
+        current.filter(
+          (invalidField) =>
+            invalidField !== 'labelImage' && invalidField !== 'countryOfOrigin',
+        ),
+      );
       setFormatErrors((current) =>
         current.includes(unsupportedBeverageMessage)
           ? current
