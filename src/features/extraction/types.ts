@@ -12,6 +12,18 @@ export interface ExtractionJobResult {
   error?: string;
   source: 'ocr' | 'fixture';
   durationMs?: number;
+  timings?: ExtractionTimings;
+}
+
+export interface ExtractionTimings {
+  preparationMs: number;
+  workerWaitMs: number;
+  recognitionMs: number;
+  totalMs: number;
+}
+
+export interface ExtractionOptions {
+  signal?: AbortSignal;
 }
 
 export type ProgressListener = (event: ExtractionProgress) => void;
@@ -19,6 +31,7 @@ export type ProgressListener = (event: ExtractionProgress) => void;
 export type ExtractFromImage = (
   file: File,
   onProgress: ProgressListener,
+  options?: ExtractionOptions,
 ) => Promise<ExtractionJobResult>;
 
 export interface DemoCase {
