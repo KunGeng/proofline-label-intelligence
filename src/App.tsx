@@ -243,11 +243,11 @@ export function App({ initialBatchItems }: AppProps) {
           : current,
       );
     } finally {
+      if (extractionAbort.current === abortController) {
+        extractionAbort.current = undefined;
+      }
       if (extractionRun.current === run) {
         clearSlowRecovery();
-        if (extractionAbort.current === abortController) {
-          extractionAbort.current = undefined;
-        }
       }
     }
   };

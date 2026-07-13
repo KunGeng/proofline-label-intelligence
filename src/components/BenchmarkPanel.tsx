@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { fieldLabel } from '../domain/validation';
 import type { Candidate, LabelExtraction } from '../domain/types';
 import { extractFromImage } from '../features/extraction/ocr';
@@ -66,41 +66,97 @@ export function BenchmarkPanel({ onClose }: BenchmarkPanelProps) {
   const [progress, setProgress] = useState('No benchmark runs yet.');
   const [error, setError] = useState<string>();
   const [isRunning, setIsRunning] = useState(false);
+  const mountedRef = useRef(true);
+  const benchmarkRun = useRef(0);
+  const benchmarkAbort = useRef<AbortController | undefined>(undefined);
+
+  useEffect(() => {
+    mountedRef.current = true;
+
+    return () => {
+      mountedRef.current = false;
+      benchmarkRun.current += 1;
+      benchmarkAbort.current?.abort();
+      benchmarkAbort.current = undefined;
+    };
+  }, []);
 
   const runBenchmark = async (): Promise<void> => {
-    setRuns([]);
-    setError(undefined);
-    setIsRunning(true);
-    setProgress('Loading the shipped sample from this site…');
+    if (!mountedRef.current) {
+      return;
+    }
+
+    const run = benchmarkRun.current + 1;
+    benchmarkRun.current = run;
+    benchmarkAbort.current?.abort();
+    const abortController = new AbortController();
+    benchmarkAbort.current = abortController;
+    const isCurrent = (): boolean =>
+      mountedRef.current &&
+      benchmarkRun.current === run &&
+      !abortController.signal.aborted;
+
+    if (isCurrent()) {
+      setRuns([]);
+      setError(undefined);
+      setIsRunning(true);
+      setProgress('Loading the shipped sample from this site…');
+    }
 
     try {
-      const response = await fetch('/demo/old-tom-bourbon.jpg');
+      const response = await fetch('/demo/old-tom-bourbon.jpg', {
+        signal: abortController.signal,
+      });
+      if (!isCurrent()) {
+        return;
+      }
       if (!response.ok) {
         throw new Error('The shipped sample could not be loaded.');
       }
 
       const blob = await response.blob();
+      if (!isCurrent()) {
+        return;
+      }
       const file = new File([blob], 'old-tom-bourbon.jpg', { type: 'image/jpeg' });
       setProgress('Running first sample run…');
       const first = await extractFromImage(file, ({ value }) => {
-        setProgress(`Running first sample run… ${Math.round(value * 100)}% complete.`);
-      });
+        if (isCurrent()) {
+          setProgress(`Running first sample run… ${Math.round(value * 100)}% complete.`);
+        }
+      }, { signal: abortController.signal });
+      if (!isCurrent() || first.error === 'cancelled') {
+        return;
+      }
       setRuns([first]);
 
       setProgress('Running second warm-worker run…');
       const second = await extractFromImage(file, ({ value }) => {
-        setProgress(`Running second warm-worker run… ${Math.round(value * 100)}% complete.`);
-      });
+        if (isCurrent()) {
+          setProgress(`Running second warm-worker run… ${Math.round(value * 100)}% complete.`);
+        }
+      }, { signal: abortController.signal });
+      if (!isCurrent() || second.error === 'cancelled') {
+        return;
+      }
       setRuns([first, second]);
       setProgress('Benchmark complete. Results remain in this open panel only.');
     } catch (caught) {
+      if (!isCurrent()) {
+        return;
+      }
       const message = caught instanceof Error
         ? caught.message
         : 'The local benchmark could not complete.';
       setError(message);
       setProgress('Benchmark could not complete.');
     } finally {
-      setIsRunning(false);
+      if (benchmarkAbort.current === abortController) {
+        benchmarkAbort.current = undefined;
+      }
+      if (isCurrent()) {
+        setIsRunning(false);
+      }
     }
   };
 

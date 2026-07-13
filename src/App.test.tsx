@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { StrictMode } from 'react';
 import { App } from './App';
 import { CANONICAL_WARNING_BODY, CANONICAL_WARNING_HEADING } from './domain/constants';
 import type { Candidate } from './domain/types';
@@ -662,7 +663,10 @@ it('runs an in-memory same-origin sample benchmark with honest run labels and ti
 
   expect(await screen.findByRole('heading', { name: /first sample run/i })).toBeInTheDocument();
   expect(screen.getByRole('heading', { name: /second warm-worker run/i })).toBeInTheDocument();
-  expect(fetchSample).toHaveBeenCalledWith('/demo/old-tom-bourbon.jpg');
+  expect(fetchSample).toHaveBeenCalledWith(
+    '/demo/old-tom-bourbon.jpg',
+    expect.objectContaining({ signal: expect.any(AbortSignal) }),
+  );
   expect(extractFromImage).toHaveBeenCalledTimes(2);
   const firstRun = screen.getByRole('article', { name: /first sample run/i });
   expect(within(firstRun).getByText('Total: 1.2 s')).toBeInTheDocument();
@@ -677,6 +681,132 @@ it('runs an in-memory same-origin sample benchmark with honest run labels and ti
   await user.click(screen.getByRole('button', { name: /run local sample benchmark/i }));
   expect(screen.getByText(/no benchmark runs yet/i)).toBeInTheDocument();
   expect(screen.queryByRole('heading', { name: /first sample run/i })).not.toBeInTheDocument();
+});
+
+it('cancels a pending benchmark fetch when navigation unmounts the panel', async () => {
+  const user = userEvent.setup();
+  const response = deferred<{ ok: boolean; blob: () => Promise<Blob> }>();
+  let fetchSignal: AbortSignal | undefined;
+  const fetchSample = vi.fn((_url: string, init?: RequestInit) => {
+    fetchSignal = init?.signal ?? undefined;
+    return response.promise;
+  });
+  vi.stubGlobal('fetch', fetchSample);
+
+  render(<App />);
+  await user.click(screen.getByRole('button', { name: /run local sample benchmark/i }));
+  await user.click(screen.getByRole('button', { name: /^run benchmark$/i }));
+
+  expect(fetchSignal).toBeDefined();
+  await user.click(screen.getByRole('button', { name: /^new review$/i }));
+
+  expect(fetchSignal?.aborted).toBe(true);
+  expect(
+    screen.getByRole('heading', { name: /start with the facts submitted for review/i }),
+  ).toBeInTheDocument();
+
+  await act(async () => {
+    response.resolve({
+      ok: true,
+      blob: async () => new Blob(['sample'], { type: 'image/jpeg' }),
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  expect(extractFromImage).not.toHaveBeenCalled();
+  expect(screen.queryByRole('heading', { name: /first sample run/i })).not.toBeInTheDocument();
+});
+
+it('cancels a pending benchmark OCR and ignores its cancelled result after navigation', async () => {
+  const user = userEvent.setup();
+  let extractionSignal: AbortSignal | undefined;
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+    ok: true,
+    blob: async () => new Blob(['sample'], { type: 'image/jpeg' }),
+  }));
+  vi.mocked(extractFromImage).mockImplementationOnce((_file, _onProgress, options) => {
+    extractionSignal = options?.signal;
+    return new Promise<ExtractionJobResult>((resolve) => {
+      options?.signal?.addEventListener('abort', () => {
+        resolve({ extraction: {}, rawText: '', source: 'ocr', error: 'cancelled' });
+      }, { once: true });
+    });
+  });
+
+  render(<App />);
+  await user.click(screen.getByRole('button', { name: /run local sample benchmark/i }));
+  await user.click(screen.getByRole('button', { name: /^run benchmark$/i }));
+  await waitFor(() => {
+    expect(extractionSignal).toBeDefined();
+  });
+
+  await user.click(screen.getByRole('button', { name: /^new review$/i }));
+
+  expect(extractionSignal?.aborted).toBe(true);
+  await act(async () => {
+    await Promise.resolve();
+  });
+  expect(
+    screen.getByRole('heading', { name: /start with the facts submitted for review/i }),
+  ).toBeInTheDocument();
+  expect(screen.queryByRole('heading', { name: /first sample run/i })).not.toBeInTheDocument();
+});
+
+it('keeps the benchmark runnable after Strict Mode replays its lifecycle cleanup', async () => {
+  const user = userEvent.setup();
+  const fetchSample = vi.fn().mockResolvedValue({
+    ok: true,
+    blob: async () => new Blob(['sample'], { type: 'image/jpeg' }),
+  });
+  vi.stubGlobal('fetch', fetchSample);
+  vi.mocked(extractFromImage).mockResolvedValue({
+    extraction: {},
+    rawText: '',
+    source: 'ocr',
+  });
+
+  render(
+    <StrictMode>
+      <App />
+    </StrictMode>,
+  );
+  await user.click(screen.getByRole('button', { name: /run local sample benchmark/i }));
+  await user.click(screen.getByRole('button', { name: /^run benchmark$/i }));
+
+  await waitFor(() => {
+    expect(fetchSample).toHaveBeenCalledTimes(1);
+  });
+});
+
+it('clears a settled manual-path controller before subsequent navigation', async () => {
+  const user = userEvent.setup();
+  const result = deferred<ExtractionJobResult>();
+  let signal: AbortSignal | undefined;
+  vi.mocked(extractFromImage).mockImplementationOnce((_file, _onProgress, options) => {
+    signal = options?.signal;
+    return result.promise;
+  });
+
+  await startPendingManualReview(user);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(5_000);
+  });
+  fireEvent.click(screen.getByRole('button', { name: /review manually now/i }));
+
+  await act(async () => {
+    result.resolve({ extraction: {}, rawText: '', source: 'ocr' });
+    await Promise.resolve();
+  });
+  expect(signal?.aborted).toBe(false);
+
+  fireEvent.click(screen.getByRole('button', { name: /review another label/i }));
+
+  expect(signal?.aborted).toBe(false);
+  expect(
+    screen.getByRole('heading', { name: /start with the facts submitted for review/i }),
+  ).toBeInTheDocument();
 });
 
 it('preserves raw OCR evidence when an agent corrects an extracted candidate', async () => {
