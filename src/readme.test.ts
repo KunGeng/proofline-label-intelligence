@@ -59,6 +59,15 @@ describe('submission documentation', () => {
     expect(packageJson.scripts?.preview).toContain('vite preview');
   });
 
+  it('distinguishes the existing public prototype from a source revision awaiting release', async () => {
+    const readme = await readFile('README.md', 'utf8');
+
+    expect(readme).toContain('https://proofline-label-intelligence.kungeng0803.chatgpt.site');
+    expect(readme).toContain('may serve an earlier validated build');
+    expect(readme).toContain('The current source revision awaits final verification and deployment.');
+    expect(readme).not.toContain('**Deployment status:** published as a public Sites deployment');
+  });
+
   it('aligns the documented local-review contract with package metadata and CI', async () => {
     const [readme, design, packageText, workflow] = await Promise.all([
       readFile('README.md', 'utf8'),

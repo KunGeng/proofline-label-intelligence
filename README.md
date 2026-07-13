@@ -2,7 +2,7 @@
 
 > A browser-first evidence-review prototype for U.S. distilled-spirit labels. It turns declared label facts and a label image into a conservative, agent-led review—not an automatic approval.
 
-**Live prototype:** [proofline-label-intelligence.kungeng0803.chatgpt.site](https://proofline-label-intelligence.kungeng0803.chatgpt.site)
+**Existing public prototype:** [proofline-label-intelligence.kungeng0803.chatgpt.site](https://proofline-label-intelligence.kungeng0803.chatgpt.site)
 
 **Source repository:** [github.com/KunGeng/proofline-label-intelligence](https://github.com/KunGeng/proofline-label-intelligence)
 
@@ -22,7 +22,7 @@ Design rationale and trade-off discussion live in [docs/DESIGN.md](docs/DESIGN.m
 
 ## Try it in 60 seconds
 
-On the [live prototype](https://proofline-label-intelligence.kungeng0803.chatgpt.site) (or a local build):
+On a local build or the [existing public prototype](https://proofline-label-intelligence.kungeng0803.chatgpt.site):
 
 1. Download the sample label: [public/demo/old-tom-bourbon.jpg](public/demo/old-tom-bourbon.jpg) — the app also links it from both intake screens.
 2. Choose **New review**, enter the facts printed on it (brand `OLD TOM DISTILLERY`, class/type `Kentucky Straight Bourbon Whiskey`, ABV `45%`, proof `90`, net contents `750 mL`, producer `Old Tom Distillery, Louisville, KY`), and attach the image.
@@ -202,7 +202,7 @@ The suite covers deterministic validation and warning behavior, parser extractio
 
 ## Deployment
 
-**Deployment status:** published as a public Sites deployment at [proofline-label-intelligence.kungeng0803.chatgpt.site](https://proofline-label-intelligence.kungeng0803.chatgpt.site). The build remains a static browser-local application; the host serves assets but does not receive label images or application facts from the app.
+**Release status:** An existing public prototype is available at [proofline-label-intelligence.kungeng0803.chatgpt.site](https://proofline-label-intelligence.kungeng0803.chatgpt.site). It may serve an earlier validated build. The current source revision awaits final verification and deployment. The build remains a static browser-local application; the host serves assets but does not receive label images or application facts from the app.
 
 For any static host (including a Sites project), use:
 
