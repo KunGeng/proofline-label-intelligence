@@ -35,8 +35,15 @@ interface ReviewDeskProps {
   progress?: number;
   durationMs?: number;
   isGuidedDemo: boolean;
+  shouldFocusManualDisclosure: boolean;
+  slowExtraction: boolean;
+  stopAvailable: boolean;
+  onManualReview: () => void;
+  onStopOcr: () => void;
   warningTypographyConfirmed: boolean;
   onWarningTypographyConfirmed: (confirmed: boolean) => void;
+  warningLegibilityConfirmed: boolean;
+  onWarningLegibilityConfirmed: (confirmed: boolean) => void;
   onCorrectCandidate: (field: CandidateField, value: string) => void;
   onStartAnother: () => void;
 }
@@ -64,7 +71,11 @@ const decisionTitleFor = (state: ReviewState): string =>
   state === 'match' ? 'No discrepancies detected' : statusLabel(state);
 
 const taskTargetFor = (field: FieldKey): string =>
-  field === 'warningTypography' ? '#typography-confirmation' : '#field-comparison';
+  field === 'warningTypography'
+    ? '#typography-confirmation'
+    : field === 'warningLegibility'
+      ? '#legibility-confirmation'
+      : '#field-comparison';
 
 const confidenceText = (candidate: Candidate): string =>
   candidate.source === 'agent'
@@ -90,8 +101,15 @@ export function ReviewDesk({
   progress,
   durationMs,
   isGuidedDemo,
+  shouldFocusManualDisclosure,
+  slowExtraction,
+  stopAvailable,
+  onManualReview,
+  onStopOcr,
   warningTypographyConfirmed,
   onWarningTypographyConfirmed,
+  warningLegibilityConfirmed,
+  onWarningLegibilityConfirmed,
   onCorrectCandidate,
   onStartAnother,
 }: ReviewDeskProps) {
@@ -100,11 +118,15 @@ export function ReviewDesk({
   const [correctionError, setCorrectionError] = useState<string>();
   const [restoreFocusField, setRestoreFocusField] = useState<CandidateField>();
   const correctionInputRef = useRef<HTMLInputElement>(null);
+  const manualDisclosureRef = useRef<HTMLParagraphElement>(null);
   const correctionTriggerRefs = useRef<
     Partial<Record<CandidateField, HTMLButtonElement | null>>
   >({});
   const warningTypography = result?.fields.find(
     (field) => field.field === 'warningTypography',
+  );
+  const warningLegibility = result?.fields.find(
+    (field) => field.field === 'warningLegibility',
   );
   const outstandingFields = result?.fields.filter(
     (field) => field.state !== 'match',
@@ -121,6 +143,12 @@ export function ReviewDesk({
       setRestoreFocusField(undefined);
     }
   }, [editingField, restoreFocusField]);
+
+  useEffect(() => {
+    if (shouldFocusManualDisclosure) {
+      manualDisclosureRef.current?.focus();
+    }
+  }, [shouldFocusManualDisclosure]);
 
   const openCandidateEntry = (
     field: CandidateField,
@@ -221,7 +249,15 @@ export function ReviewDesk({
         <div>
           <p className="eyebrow">Single-label evidence review</p>
           <h1 id="review-heading">{title}</h1>
-          {disclosure ? <p className="disclosure">{disclosure}</p> : null}
+          {disclosure ? (
+            <p
+              ref={shouldFocusManualDisclosure ? manualDisclosureRef : undefined}
+              className="disclosure"
+              tabIndex={shouldFocusManualDisclosure ? -1 : undefined}
+            >
+              {disclosure}
+            </p>
+          ) : null}
         </div>
         <button type="button" className="button button--secondary" onClick={onStartAnother}>
           Review another label
@@ -244,6 +280,22 @@ export function ReviewDesk({
             Proofline is reading this label locally. Findings and visual-confirmation
             controls will appear only after extraction finishes.
           </p>
+          {slowExtraction ? (
+            <aside className="slow-ocr-notice">
+              <strong>This is taking longer than expected.</strong>
+              <p>You can keep waiting or inspect the image and enter evidence manually.</p>
+              <div className="slow-ocr-notice__actions">
+                <button type="button" className="button button--secondary" onClick={onManualReview}>
+                  Review manually now
+                </button>
+                {stopAvailable ? (
+                  <button type="button" className="button button--secondary" onClick={onStopOcr}>
+                    Stop OCR and review manually
+                  </button>
+                ) : null}
+              </div>
+            </aside>
+          ) : null}
           {progressPercent !== undefined ? (
             <div
               className="processing-note"
@@ -360,8 +412,8 @@ export function ReviewDesk({
             </details>
           </SectionCard>
 
-          <div id="typography-confirmation">
-            <SectionCard title="Required visual confirmation" eyebrow="Agent check">
+          <SectionCard title="Required visual confirmation" eyebrow="Agent check">
+            <div id="typography-confirmation">
               <p className="section-copy">
                 OCR can read the wording, but it cannot verify the warning heading’s presentation.
               </p>
@@ -379,8 +431,27 @@ export function ReviewDesk({
                   <p>{warningTypography.reason}</p>
                 </div>
               ) : null}
-            </SectionCard>
-          </div>
+            </div>
+            <div className="warning-legibility-confirmation" id="legibility-confirmation">
+              <label className="checkbox-field checkbox-field--confirmation">
+                <input
+                  type="checkbox"
+                  checked={warningLegibilityConfirmed}
+                  onChange={(event) => onWarningLegibilityConfirmed(event.target.checked)}
+                />
+                <span>
+                  I reviewed warning legibility, contrast, and placement. Exact printed type size still
+                  needs final regulatory review.
+                </span>
+              </label>
+              {warningLegibility ? (
+                <div className="confirmation-status">
+                  <StatusBadge state={warningLegibility.state} />
+                  <p>{warningLegibility.reason}</p>
+                </div>
+              ) : null}
+            </div>
+          </SectionCard>
         </aside>
 
         <div id="field-comparison">

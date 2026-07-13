@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 
-export type AppView = 'landing' | 'intake' | 'batch' | 'review';
+export type AppView = 'landing' | 'intake' | 'batch' | 'review' | 'benchmark';
 
 interface AppShellProps {
   activeView: AppView;

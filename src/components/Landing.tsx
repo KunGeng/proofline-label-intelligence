@@ -2,9 +2,15 @@ interface LandingProps {
   onOpenDemo: () => void;
   onReviewLabel: () => void;
   onReviewBatch: () => void;
+  onOpenBenchmark: () => void;
 }
 
-export function Landing({ onOpenDemo, onReviewLabel, onReviewBatch }: LandingProps) {
+export function Landing({
+  onOpenDemo,
+  onReviewLabel,
+  onReviewBatch,
+  onOpenBenchmark,
+}: LandingProps) {
   return (
     <>
       <section className="hero" aria-labelledby="proofline-heading">
@@ -37,6 +43,20 @@ export function Landing({ onOpenDemo, onReviewLabel, onReviewBatch }: LandingPro
           </ol>
           <p>Every status carries a reason, confidence signal, and visible source.</p>
         </aside>
+      </section>
+
+      <section className="benchmark-callout" aria-labelledby="benchmark-callout-heading">
+        <div>
+          <p className="eyebrow">On-device timing</p>
+          <h2 id="benchmark-callout-heading">Measure this browser when you choose.</h2>
+          <p>
+            Run the shipped label sample twice to inspect this device’s first sample run and
+            second warm-worker run. Results stay in this browser session and are not saved.
+          </p>
+        </div>
+        <button type="button" className="button button--secondary" onClick={onOpenBenchmark}>
+          Run local sample benchmark
+        </button>
       </section>
 
       <section className="principles" aria-labelledby="principles-heading">

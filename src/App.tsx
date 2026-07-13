@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { AppShell, type AppView } from './components/AppShell';
 import { BatchQueue } from './components/BatchQueue';
+import { BenchmarkPanel } from './components/BenchmarkPanel';
 import { IntakeForm } from './components/IntakeForm';
 import { Landing } from './components/Landing';
 import { ReviewDesk, type CandidateField } from './components/ReviewDesk';
 import { validateLabel } from './domain/validation';
 import type { ApplicationData, LabelExtraction, ReviewFlags } from './domain/types';
 import { oldTomDemo, OLD_TOM_RAW_TEXT } from './features/demo/cases';
-import { extractFromImage } from './features/extraction/ocr';
+import { extractFromImage, prewarmOcr } from './features/extraction/ocr';
 import type { QueueItem } from './features/intake/queue';
 
 interface ActiveReview {
@@ -17,6 +18,7 @@ interface ActiveReview {
   extraction: LabelExtraction;
   rawText: string;
   isGuidedDemo?: boolean;
+  isManualEvidence?: boolean;
   imageUrl?: string;
   objectUrl?: string;
   disclosure?: string;
@@ -60,6 +62,27 @@ const emptyReviewFlags: ReviewFlags = {
   warningLegibilityConfirmed: false,
 };
 
+interface IdleCapableWindow {
+  requestIdleCallback?: (callback: () => void, options?: { timeout?: number }) => number;
+}
+
+const schedulePrewarm = (): void => {
+  const run = (): void => {
+    void prewarmOcr().catch(() => undefined);
+  };
+  const idleWindow = window as unknown as IdleCapableWindow;
+
+  if (idleWindow.requestIdleCallback) {
+    idleWindow.requestIdleCallback(run, { timeout: 1_500 });
+    return;
+  }
+
+  window.setTimeout(run, 0);
+};
+
+const manualEvidenceDisclosure =
+  'Manual evidence mode — no OCR candidate was used. Inspect the original label and enter only evidence you can verify.';
+
 interface AppProps {
   initialBatchItems?: QueueItem[];
 }
@@ -70,7 +93,12 @@ export function App({ initialBatchItems }: AppProps) {
   );
   const [review, setReview] = useState<ActiveReview>();
   const [warningTypographyConfirmed, setWarningTypographyConfirmed] = useState(false);
+  const [warningLegibilityConfirmed, setWarningLegibilityConfirmed] = useState(false);
+  const [slowExtraction, setSlowExtraction] = useState(false);
+  const [stopAvailable, setStopAvailable] = useState(false);
   const extractionRun = useRef(0);
+  const extractionAbort = useRef<AbortController | undefined>(undefined);
+  const slowTimerCleanup = useRef<(() => void) | undefined>(undefined);
 
   useEffect(() => {
     const objectUrl = review?.objectUrl;
@@ -82,16 +110,59 @@ export function App({ initialBatchItems }: AppProps) {
     };
   }, [review?.objectUrl]);
 
-  const resetTo = (nextView: Extract<AppView, 'landing' | 'intake' | 'batch'>): void => {
-    extractionRun.current += 1;
-    setReview(undefined);
+  useEffect(
+    () => () => {
+      extractionRun.current += 1;
+      extractionAbort.current?.abort();
+      slowTimerCleanup.current?.();
+      slowTimerCleanup.current = undefined;
+    },
+    [],
+  );
+
+  const clearSlowRecovery = (): void => {
+    slowTimerCleanup.current?.();
+    slowTimerCleanup.current = undefined;
+    setSlowExtraction(false);
+    setStopAvailable(false);
+  };
+
+  const startSlowTimers = (): (() => void) => {
+    const slow = window.setTimeout(() => setSlowExtraction(true), 5_000);
+    const stop = window.setTimeout(() => setStopAvailable(true), 15_000);
+
+    return () => {
+      window.clearTimeout(slow);
+      window.clearTimeout(stop);
+    };
+  };
+
+  const resetVisualConfirmations = (): void => {
     setWarningTypographyConfirmed(false);
+    setWarningLegibilityConfirmed(false);
+  };
+
+  const cancelActiveExtraction = (): void => {
+    extractionRun.current += 1;
+    extractionAbort.current?.abort();
+    extractionAbort.current = undefined;
+    clearSlowRecovery();
+  };
+
+  const resetTo = (nextView: Exclude<AppView, 'review'>): void => {
+    cancelActiveExtraction();
+    setReview(undefined);
+    resetVisualConfirmations();
     setView(nextView);
+
+    if (nextView === 'intake' || nextView === 'batch') {
+      schedulePrewarm();
+    }
   };
 
   const openDemo = (): void => {
-    extractionRun.current += 1;
-    setWarningTypographyConfirmed(false);
+    cancelActiveExtraction();
+    resetVisualConfirmations();
     setReview({
       phase: 'ready',
       title: oldTomDemo.title,
@@ -108,9 +179,13 @@ export function App({ initialBatchItems }: AppProps) {
   const startReview = async (application: ApplicationData, file: File): Promise<void> => {
     const run = extractionRun.current + 1;
     extractionRun.current = run;
+    extractionAbort.current?.abort();
+    clearSlowRecovery();
+    const abortController = new AbortController();
+    extractionAbort.current = abortController;
     const objectUrl = previewUrlFor(file);
 
-    setWarningTypographyConfirmed(false);
+    resetVisualConfirmations();
     setReview({
       phase: 'processing',
       title: file.name,
@@ -122,6 +197,7 @@ export function App({ initialBatchItems }: AppProps) {
       progress: 0,
     });
     setView('review');
+    slowTimerCleanup.current = startSlowTimers();
 
     try {
       const output = await extractFromImage(file, ({ value }) => {
@@ -132,7 +208,7 @@ export function App({ initialBatchItems }: AppProps) {
         setReview((current) =>
           current ? { ...current, progress: value } : current,
         );
-      });
+      }, { signal: abortController.signal });
 
       if (extractionRun.current !== run) {
         return;
@@ -166,7 +242,39 @@ export function App({ initialBatchItems }: AppProps) {
             }
           : current,
       );
+    } finally {
+      if (extractionRun.current === run) {
+        clearSlowRecovery();
+        if (extractionAbort.current === abortController) {
+          extractionAbort.current = undefined;
+        }
+      }
     }
+  };
+
+  const reviewManually = (): void => {
+    extractionRun.current += 1;
+    clearSlowRecovery();
+    setReview((current) =>
+      current
+        ? {
+            ...current,
+            phase: 'ready',
+            isManualEvidence: true,
+            extraction: {},
+            rawText: '',
+            disclosure: manualEvidenceDisclosure,
+            error: undefined,
+            progress: undefined,
+            durationMs: undefined,
+          }
+        : current,
+    );
+  };
+
+  const stopAndReviewManually = (): void => {
+    extractionAbort.current?.abort();
+    reviewManually();
   };
 
   const correctCandidate = (field: CandidateField, value: string): void => {
@@ -198,6 +306,7 @@ export function App({ initialBatchItems }: AppProps) {
           onOpenDemo={openDemo}
           onReviewLabel={() => resetTo('intake')}
           onReviewBatch={() => resetTo('batch')}
+          onOpenBenchmark={() => resetTo('benchmark')}
         />
       );
     }
@@ -210,6 +319,10 @@ export function App({ initialBatchItems }: AppProps) {
       return <BatchQueue initialItems={initialBatchItems} />;
     }
 
+    if (view === 'benchmark') {
+      return <BenchmarkPanel onClose={() => resetTo('landing')} />;
+    }
+
     if (review) {
       const result =
         review.phase === 'ready'
@@ -219,6 +332,7 @@ export function App({ initialBatchItems }: AppProps) {
               flags: {
                 ...emptyReviewFlags,
                 warningTypographyConfirmed,
+                warningLegibilityConfirmed,
               },
             })
           : undefined;
@@ -236,8 +350,15 @@ export function App({ initialBatchItems }: AppProps) {
           progress={review.progress}
           durationMs={review.durationMs}
           isGuidedDemo={Boolean(review.isGuidedDemo)}
+          shouldFocusManualDisclosure={Boolean(review.isManualEvidence)}
+          slowExtraction={slowExtraction}
+          stopAvailable={stopAvailable}
+          onManualReview={reviewManually}
+          onStopOcr={stopAndReviewManually}
           warningTypographyConfirmed={warningTypographyConfirmed}
           onWarningTypographyConfirmed={setWarningTypographyConfirmed}
+          warningLegibilityConfirmed={warningLegibilityConfirmed}
+          onWarningLegibilityConfirmed={setWarningLegibilityConfirmed}
           onCorrectCandidate={correctCandidate}
           onStartAnother={() => resetTo('intake')}
         />
@@ -249,6 +370,7 @@ export function App({ initialBatchItems }: AppProps) {
         onOpenDemo={openDemo}
         onReviewLabel={() => resetTo('intake')}
         onReviewBatch={() => resetTo('batch')}
+        onOpenBenchmark={() => resetTo('benchmark')}
       />
     );
   })();

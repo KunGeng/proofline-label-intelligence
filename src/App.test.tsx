@@ -1,19 +1,28 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { App } from './App';
 import { CANONICAL_WARNING_BODY, CANONICAL_WARNING_HEADING } from './domain/constants';
 import type { Candidate } from './domain/types';
-import { extractFromImage } from './features/extraction/ocr';
+import { extractFromImage, prewarmOcr } from './features/extraction/ocr';
 import type { ExtractionJobResult } from './features/extraction/types';
 import { serializeResults } from './features/intake/export';
 import type { QueueItem } from './features/intake/queue';
 
 vi.mock('./features/extraction/ocr', () => ({
   extractFromImage: vi.fn(),
+  prewarmOcr: vi.fn(),
 }));
+
+beforeEach(() => {
+  vi.mocked(prewarmOcr).mockResolvedValue(undefined);
+});
 
 afterEach(() => {
   vi.mocked(extractFromImage).mockReset();
+  vi.mocked(prewarmOcr).mockReset();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 interface Deferred<T> {
@@ -30,7 +39,9 @@ const deferred = <T,>(): Deferred<T> => {
   return { promise, resolve };
 };
 
-const startManualReview = async (user: ReturnType<typeof userEvent.setup>): Promise<void> => {
+const fillManualReviewForm = async (
+  user: ReturnType<typeof userEvent.setup>,
+): Promise<HTMLElement> => {
   render(<App />);
   await user.click(screen.getByRole('button', { name: /review a label/i }));
   await user.type(screen.getByRole('textbox', { name: /^brand name$/i }), 'Old Tom');
@@ -42,7 +53,19 @@ const startManualReview = async (user: ReturnType<typeof userEvent.setup>): Prom
     screen.getByLabelText(/^choose label image$/i),
     new File(['label'], 'old-tom.png', { type: 'image/png' }),
   );
-  await user.click(screen.getByRole('button', { name: /start evidence review/i }));
+  return screen.getByRole('button', { name: /start evidence review/i });
+};
+
+const startManualReview = async (user: ReturnType<typeof userEvent.setup>): Promise<void> => {
+  await user.click(await fillManualReviewForm(user));
+};
+
+const startPendingManualReview = async (
+  user: ReturnType<typeof userEvent.setup>,
+): Promise<void> => {
+  const submit = await fillManualReviewForm(user);
+  vi.useFakeTimers();
+  fireEvent.click(submit);
 };
 
 const batchFixture: QueueItem[] = [
@@ -418,6 +441,242 @@ it('labels a manual review with next reviewer actions', async () => {
   expect(
     screen.queryByRole('heading', { name: /a quick way through this sample/i }),
   ).not.toBeInTheDocument();
+});
+
+it('offers manual review after five seconds and ignores a late OCR result', async () => {
+  const user = userEvent.setup();
+  const result = deferred<ExtractionJobResult>();
+  vi.stubGlobal('URL', {
+    createObjectURL: vi.fn().mockReturnValue('blob:old-tom'),
+    revokeObjectURL: vi.fn(),
+  });
+  vi.mocked(extractFromImage).mockReturnValueOnce(result.promise);
+
+  await startPendingManualReview(user);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(5_000);
+  });
+
+  expect(screen.getByText(/this is taking longer than expected/i)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: /review manually now/i }));
+  expect(screen.getByText(/manual evidence mode/i)).toBeInTheDocument();
+
+  await act(async () => {
+    result.resolve({
+      extraction: {},
+      rawText: 'OLD TOM',
+      source: 'ocr',
+      durationMs: 4_321,
+    });
+    await Promise.resolve();
+  });
+
+  expect(screen.queryByText(/local OCR finished/i)).not.toBeInTheDocument();
+  expect(screen.getByRole('img', { name: /label preview: old-tom\.png/i })).toHaveAttribute(
+    'src',
+    'blob:old-tom',
+  );
+});
+
+it('moves focus to the manual-evidence disclosure after recovery', async () => {
+  const user = userEvent.setup();
+  const result = deferred<ExtractionJobResult>();
+  vi.mocked(extractFromImage).mockReturnValueOnce(result.promise);
+
+  await startPendingManualReview(user);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(5_000);
+  });
+
+  fireEvent.click(screen.getByRole('button', { name: /review manually now/i }));
+
+  expect(screen.getByText(/manual evidence mode/i)).toHaveFocus();
+
+  await act(async () => {
+    result.resolve({ extraction: {}, rawText: '', source: 'ocr' });
+    await Promise.resolve();
+  });
+});
+
+it('uses one polite live region for slow-review recovery', async () => {
+  const user = userEvent.setup();
+  const result = deferred<ExtractionJobResult>();
+  vi.mocked(extractFromImage).mockReturnValueOnce(result.promise);
+
+  await startPendingManualReview(user);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(5_000);
+  });
+
+  expect(screen.getByText(/this is taking longer than expected/i).closest('aside'))
+    .not.toHaveAttribute('role', 'status');
+
+  await act(async () => {
+    result.resolve({ extraction: {}, rawText: '', source: 'ocr' });
+    await Promise.resolve();
+  });
+});
+
+it('allows an explicit OCR stop after fifteen seconds before manual review', async () => {
+  const user = userEvent.setup();
+  const result = deferred<ExtractionJobResult>();
+  let signal: AbortSignal | undefined;
+  vi.mocked(extractFromImage).mockImplementationOnce((_file, _onProgress, options) => {
+    signal = options?.signal;
+    return result.promise;
+  });
+
+  await startPendingManualReview(user);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(15_000);
+  });
+
+  fireEvent.click(screen.getByRole('button', { name: /stop OCR and review manually/i }));
+
+  expect(signal?.aborted).toBe(true);
+  expect(screen.getByText(/manual evidence mode/i)).toBeInTheDocument();
+
+  await act(async () => {
+    result.resolve({ extraction: {}, rawText: '', source: 'ocr' });
+    await Promise.resolve();
+  });
+});
+
+it('cancels a still-running manual-path extraction when the reviewer leaves it', async () => {
+  const user = userEvent.setup();
+  const result = deferred<ExtractionJobResult>();
+  let signal: AbortSignal | undefined;
+  vi.mocked(extractFromImage).mockImplementationOnce((_file, _onProgress, options) => {
+    signal = options?.signal;
+    return result.promise;
+  });
+
+  await startPendingManualReview(user);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(5_000);
+  });
+  fireEvent.click(screen.getByRole('button', { name: /review manually now/i }));
+  fireEvent.click(screen.getByRole('button', { name: /review another label/i }));
+
+  expect(signal?.aborted).toBe(true);
+
+  await act(async () => {
+    result.resolve({ extraction: {}, rawText: '', source: 'ocr' });
+    await Promise.resolve();
+  });
+});
+
+it('prewarms OCR only after a reviewer enters a single or batch intake', async () => {
+  const user = userEvent.setup();
+  render(<App />);
+
+  await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+  expect(prewarmOcr).not.toHaveBeenCalled();
+
+  await user.click(screen.getByRole('button', { name: /open guided demo/i }));
+  await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+  expect(prewarmOcr).not.toHaveBeenCalled();
+
+  await user.click(screen.getByRole('button', { name: /new review/i }));
+  await waitFor(() => {
+    expect(prewarmOcr).toHaveBeenCalledTimes(1);
+  });
+
+  await user.click(screen.getByRole('button', { name: /^batch review$/i }));
+  await waitFor(() => {
+    expect(prewarmOcr).toHaveBeenCalledTimes(2);
+  });
+});
+
+it('keeps warning typography and legibility confirmations as separate reviewer checks', async () => {
+  const user = userEvent.setup();
+  vi.mocked(extractFromImage).mockResolvedValueOnce({
+    extraction: {},
+    rawText: '',
+    source: 'ocr',
+  });
+
+  await startManualReview(user);
+
+  const typography = await screen.findByRole('checkbox', {
+    name: /i visually confirmed the warning heading is uppercase and bold/i,
+  });
+  const legibility = screen.getByRole('checkbox', {
+    name: /i reviewed warning legibility, contrast, and placement\. exact printed type size still needs final regulatory review/i,
+  });
+  const legibilityRow = screen.getByRole('row', { name: /warning legibility/i });
+
+  expect(legibilityRow).toHaveTextContent('Needs review');
+  await user.click(typography);
+  await user.click(legibility);
+
+  expect(typography).toBeChecked();
+  expect(legibility).toBeChecked();
+  expect(legibilityRow).toHaveTextContent('Match');
+  expect(legibilityRow).toHaveTextContent(
+    'An agent reviewed warning legibility, contrast, and placement.',
+  );
+});
+
+it('runs an in-memory same-origin sample benchmark with honest run labels and timings', async () => {
+  const user = userEvent.setup();
+  const fetchSample = vi.fn().mockResolvedValue({
+    ok: true,
+    blob: async () => new Blob(['sample'], { type: 'image/jpeg' }),
+  });
+  vi.stubGlobal('fetch', fetchSample);
+  vi.mocked(extractFromImage)
+    .mockResolvedValueOnce({
+      extraction: { brandName: ocrCandidate('Old Tom') },
+      rawText: 'OLD TOM',
+      source: 'ocr',
+      durationMs: 1_210,
+      timings: {
+        preparationMs: 120,
+        workerWaitMs: 890,
+        recognitionMs: 200,
+        totalMs: 1_210,
+      },
+    })
+    .mockResolvedValueOnce({
+      extraction: {},
+      rawText: '',
+      source: 'ocr',
+      error: 'unreadable',
+      timings: {
+        preparationMs: 80,
+        workerWaitMs: 0,
+        recognitionMs: 740,
+        totalMs: 820,
+      },
+    });
+
+  render(<App />);
+  await user.click(screen.getByRole('button', { name: /run local sample benchmark/i }));
+
+  const progress = screen.getByRole('status', { name: /benchmark progress/i });
+  expect(progress).toHaveAttribute('aria-live', 'polite');
+  expect(screen.queryByRole('heading', { name: /first sample run/i })).not.toBeInTheDocument();
+
+  await user.click(screen.getByRole('button', { name: /^run benchmark$/i }));
+
+  expect(await screen.findByRole('heading', { name: /first sample run/i })).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: /second warm-worker run/i })).toBeInTheDocument();
+  expect(fetchSample).toHaveBeenCalledWith('/demo/old-tom-bourbon.jpg');
+  expect(extractFromImage).toHaveBeenCalledTimes(2);
+  const firstRun = screen.getByRole('article', { name: /first sample run/i });
+  expect(within(firstRun).getByText('Total: 1.2 s')).toBeInTheDocument();
+  expect(within(firstRun).getByText('Preparation: 0.1 s')).toBeInTheDocument();
+  expect(within(firstRun).getByRole('listitem')).toHaveTextContent(
+    'Brand name: Old Tom — 99% confidence',
+  );
+  expect(screen.getByText(/extraction error: unreadable/i)).toBeInTheDocument();
+  expect(screen.queryByText(/network-cold/i)).not.toBeInTheDocument();
+
+  await user.click(screen.getByRole('button', { name: /back to overview/i }));
+  await user.click(screen.getByRole('button', { name: /run local sample benchmark/i }));
+  expect(screen.getByText(/no benchmark runs yet/i)).toBeInTheDocument();
+  expect(screen.queryByRole('heading', { name: /first sample run/i })).not.toBeInTheDocument();
 });
 
 it('preserves raw OCR evidence when an agent corrects an extracted candidate', async () => {
