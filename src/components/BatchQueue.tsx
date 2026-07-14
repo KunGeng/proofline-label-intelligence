@@ -350,6 +350,16 @@ function BatchFullReview({
         flags: item.reviewFlags,
       })
     : undefined;
+  const deadlineDisclosure = item.isManualEvidence && item.status === 'manual_review_required'
+    ? item.error
+    : undefined;
+  const retryError = item.isManualEvidence && item.status === 'error'
+    ? item.error
+    : undefined;
+  const durationMs =
+    item.status === 'ready' || item.status === 'extracted_pending_application'
+      ? item.durationMs
+      : undefined;
 
   return (
     <div className="batch-full-review">
@@ -360,7 +370,9 @@ function BatchFullReview({
         phase="ready"
         rawText={item.rawText ?? ''}
         imageUrl={imageUrl}
-        durationMs={item.durationMs}
+        disclosure={deadlineDisclosure}
+        error={retryError}
+        durationMs={durationMs}
         isGuidedDemo={false}
         shouldFocusReviewHeading
         shouldFocusManualDisclosure={false}

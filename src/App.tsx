@@ -272,7 +272,7 @@ export function App({ initialBatchItems }: AppProps) {
 
         return {
           ...current,
-          phase: output.error ? 'error' : 'ready',
+          phase: output.error && !preserveDraft ? 'error' : 'ready',
           extraction,
           rawText: output.rawText || current.rawText,
           progress: undefined,
@@ -291,7 +291,7 @@ export function App({ initialBatchItems }: AppProps) {
           ? current
           : {
               ...current,
-              phase: 'error',
+              phase: preserveDraft ? 'ready' : 'error',
               progress: undefined,
               error: 'OCR could not complete. Try a clearer image or begin a new evidence review.',
               shouldFocusManualDisclosure: false,

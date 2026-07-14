@@ -42,12 +42,6 @@ interface ReviewDeskProps {
   shouldFocusManualDisclosure: boolean;
   manualEvidence?: boolean;
   onRetryOcr?: () => void;
-  // BatchQueue still passes these legacy props until Task 4 owns its manual-review path.
-  // They are accepted for compatibility only; no timer-driven recovery UI is rendered.
-  slowExtraction?: boolean;
-  stopAvailable?: boolean;
-  onManualReview?: () => void;
-  onStopOcr?: () => void;
   warningTypographyConfirmed: boolean;
   onWarningTypographyConfirmed: (confirmed: boolean) => void;
   warningLegibilityConfirmed: boolean;
@@ -429,6 +423,17 @@ export function ReviewDesk({
       </div>
 
       <ScopeNotice />
+
+      {phase === 'ready' && manualEvidence && error ? (
+        <section className="review-state review-state--error" role="alert">
+          <p className="eyebrow">OCR retry failed</p>
+          <p>{error}</p>
+          <p>
+            Manual evidence remains editable. Continue comparing the original label or retry OCR
+            when you are ready.
+          </p>
+        </section>
+      ) : null}
 
       {phase === 'processing' ? (
         <section

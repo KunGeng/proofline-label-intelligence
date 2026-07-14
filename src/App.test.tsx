@@ -62,6 +62,27 @@ const startManualReview = async (user: ReturnType<typeof userEvent.setup>): Prom
   await user.click(await fillManualReviewForm(user));
 };
 
+const enterManualRecoveryEvidence = async (
+  user: ReturnType<typeof userEvent.setup>,
+): Promise<void> => {
+  await user.click(await screen.findByRole('button', { name: /add brand name candidate/i }));
+  await user.type(
+    screen.getByRole('textbox', { name: /brand name agent-entered candidate/i }),
+    'HUMAN BRAND',
+  );
+  await user.click(screen.getByRole('button', { name: /save brand name candidate/i }));
+  await user.click(screen.getByRole('button', { name: /add proof candidate/i }));
+  await user.type(
+    screen.getByRole('textbox', { name: /proof agent-entered candidate/i }),
+    '90 Proof',
+  );
+  await user.click(screen.getByRole('button', { name: /save proof candidate/i }));
+  await user.click(screen.getByRole('button', { name: /remove proof evidence/i }));
+  await user.click(
+    screen.getByRole('checkbox', { name: /warning heading is uppercase and bold/i }),
+  );
+};
+
 const emptyReviewFlags = (): ReviewFlags => ({
   warningTypographyConfirmed: false,
   warningLegibilityConfirmed: false,
@@ -382,6 +403,7 @@ it('opens an application-backed deadline row with comparison fields without reru
     extraction: {},
     isManualEvidence: true,
     error: 'OCR stopped after five seconds. Open manual review to inspect the original label.',
+    durationMs: 5_000,
   };
 
   render(<App initialBatchItems={[item]} />);
@@ -393,6 +415,10 @@ it('opens an application-backed deadline row with comparison fields without reru
   expect(screen.getByRole('heading', { name: /field comparison/i })).toBeInTheDocument();
   expect(screen.getByRole('columnheader', { name: /application/i })).toBeInTheDocument();
   expect(screen.queryByRole('heading', { name: /manual evidence entry/i })).not.toBeInTheDocument();
+  expect(
+    screen.getByText('OCR stopped after five seconds. Open manual review to inspect the original label.'),
+  ).toBeInTheDocument();
+  expect(screen.queryByText(/Local OCR finished in 5\.0 s on this device\./i)).not.toBeInTheDocument();
   expect(extractFromImage).not.toHaveBeenCalled();
 });
 
@@ -453,28 +479,39 @@ it('keeps batch manual values and deliberate blanks when retry OCR returns anoth
   expect(extractFromImage).toHaveBeenCalledTimes(2);
 });
 
-it('reopens preserved batch manual evidence after a manual retry returns a generic error', async () => {
+it('reopens application-backed manual evidence with retry context after a retry returns a generic error', async () => {
   const user = userEvent.setup();
+  const file = new File(['label'], 'deadline-error-retry.png', { type: 'image/png' });
+  const csvText = [
+    'filename,brandName,classType,abv,proof,netContents,producerAddress,isImported,countryOfOrigin',
+    'deadline-error-retry.png,OLD TOM,Bourbon Whiskey,45%,90 Proof,750 mL,"Example, KY",false,',
+  ].join('\n');
+  const csv = new File([csvText], 'applications.csv', { type: 'text/csv' });
+  Object.defineProperty(csv, 'text', { configurable: true, value: async () => csvText });
   vi.mocked(extractFromImage)
     .mockResolvedValueOnce({
       extraction: {},
       rawText: '',
       source: 'ocr',
       error: 'deadline-exceeded',
+      durationMs: 5_000,
     })
     .mockResolvedValueOnce({
       extraction: { brandName: ocrCandidate('OCR BRAND') },
       rawText: 'OCR BRAND',
       source: 'ocr',
       error: 'The image could not be decoded.',
+      durationMs: 1_234,
     });
 
   render(<App />);
   await user.click(screen.getByRole('button', { name: /review a batch/i }));
   await user.upload(
     screen.getByLabelText(/^choose label images$/i),
-    new File(['label'], 'deadline-error-retry.png', { type: 'image/png' }),
+    file,
   );
+  await user.upload(screen.getByLabelText(/^optional application CSV$/i), csv);
+  expect(await screen.findByText('Ready: applications.csv')).toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: /begin batch review/i }));
   await user.click(
     await screen.findByRole('button', {
@@ -497,6 +534,11 @@ it('reopens preserved batch manual evidence after a manual retry returns a gener
   );
 
   expect(screen.getByText('HUMAN BRAND')).toBeInTheDocument();
+  expect(screen.getByRole('alert')).toHaveTextContent(
+    /OCR retry failed.*manual evidence remains editable/i,
+  );
+  expect(screen.getByRole('heading', { name: /field comparison/i })).toBeInTheDocument();
+  expect(screen.queryByText(/Local OCR finished in 1\.2 s on this device\./i)).not.toBeInTheDocument();
   expect(extractFromImage).toHaveBeenCalledTimes(2);
 });
 
@@ -1107,6 +1149,75 @@ it('does not present OCR candidates supplied with a deadline result', async () =
 
   expect(await screen.findByText(/OCR stopped after five seconds/i)).toBeInTheDocument();
   expect(screen.queryByText('WRONG OCR')).not.toBeInTheDocument();
+});
+
+it('keeps manual evidence editable when a deadline retry returns an ordinary OCR error', async () => {
+  const user = userEvent.setup();
+  vi.stubGlobal('URL', {
+    createObjectURL: vi.fn(() => 'blob:deadline-retry-error'),
+    revokeObjectURL: vi.fn(),
+  });
+  vi.mocked(extractFromImage)
+    .mockResolvedValueOnce({
+      extraction: {},
+      rawText: '',
+      source: 'ocr',
+      error: 'deadline-exceeded',
+    })
+    .mockResolvedValueOnce({
+      extraction: {},
+      rawText: '',
+      source: 'ocr',
+      error: 'unreadable',
+    });
+
+  await startManualReview(user);
+  await enterManualRecoveryEvidence(user);
+  await user.click(screen.getByRole('button', { name: /retry OCR/i }));
+
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    /OCR retry failed.*manual evidence remains editable/i,
+  );
+  expect(screen.getByRole('img', { name: /label preview: old-tom\.png/i })).toBeInTheDocument();
+  expect(screen.getByText('HUMAN BRAND')).toBeInTheDocument();
+  expect(screen.queryByText('90 Proof')).not.toBeInTheDocument();
+  expect(
+    screen.getByRole('checkbox', { name: /warning heading is uppercase and bold/i }),
+  ).toBeChecked();
+  expect(screen.getByRole('button', { name: /add proof candidate/i })).toBeInTheDocument();
+  expect(screen.getByRole('table')).toBeInTheDocument();
+});
+
+it('keeps manual evidence editable when a deadline retry rejects', async () => {
+  const user = userEvent.setup();
+  vi.stubGlobal('URL', {
+    createObjectURL: vi.fn(() => 'blob:deadline-retry-rejection'),
+    revokeObjectURL: vi.fn(),
+  });
+  vi.mocked(extractFromImage)
+    .mockResolvedValueOnce({
+      extraction: {},
+      rawText: '',
+      source: 'ocr',
+      error: 'deadline-exceeded',
+    })
+    .mockRejectedValueOnce(new Error('worker failed'));
+
+  await startManualReview(user);
+  await enterManualRecoveryEvidence(user);
+  await user.click(screen.getByRole('button', { name: /retry OCR/i }));
+
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    /OCR retry failed.*manual evidence remains editable/i,
+  );
+  expect(screen.getByRole('img', { name: /label preview: old-tom\.png/i })).toBeInTheDocument();
+  expect(screen.getByText('HUMAN BRAND')).toBeInTheDocument();
+  expect(screen.queryByText('90 Proof')).not.toBeInTheDocument();
+  expect(
+    screen.getByRole('checkbox', { name: /warning heading is uppercase and bold/i }),
+  ).toBeChecked();
+  expect(screen.getByRole('button', { name: /add proof candidate/i })).toBeInTheDocument();
+  expect(screen.getByRole('table')).toBeInTheDocument();
 });
 
 it('keeps human value, deliberate blank, and visual flags when retry OCR fills an untouched field', async () => {
