@@ -104,10 +104,7 @@ Design responses:
 - Images longer than 2,000 px are downscaled before recognition. One prewarmed worker
   may shorten initialization after deliberate intake; it does not make every first
   extraction equivalent.
-- The UI reports **measured extraction time** per label (single review and batch rows),
-  so the prototype's actual speed on the evaluator's hardware is visible rather than
-  claimed. The batch progress line shows a running average and a remaining-time
-  estimate.
+- For a real review, Proofline shows measured extraction time only when OCR completes successfully; a deadline result or retry that ends in an OCR error does not display a completed-OCR duration. Batch progress includes a running average with a remaining-time estimate.
 - The local sample benchmark fetches the shipped same-origin label and runs it twice on
   the current device. It reports **First sample run** and **Second warm-worker run**
   with phase timings, field coverage, and per-field confidence. It is not a universal speed guarantee or a network-cold measurement: a normal browser session may already have an initialized worker.

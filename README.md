@@ -130,8 +130,7 @@ scheduling, not an absolute real-time guarantee while a browser event loop is bl
 - **Intent-triggered worker readiness.** A single worker may be warmed after intake intent;
   the second worker is demand-created for batch work. Labels are downscaled to a
   2,000-pixel longest edge before recognition.
-- **Measured, not claimed.** The app displays measured extraction time for every real review
-  and batch progress includes a running average with a remaining-time estimate.
+- **Measured, not claimed.** For a real review, Proofline shows measured extraction time only when OCR completes successfully; a deadline result or retry that ends in an OCR error does not display a completed-OCR duration. Batch progress includes a running average with a remaining-time estimate.
 - **Local benchmark.** `Run local sample benchmark` fetches the shipped sample from the same
   origin and runs it twice on the current device. It labels the outcomes **First sample run**
   and **Second warm-worker run**, with phase timings, field coverage, and field confidence.

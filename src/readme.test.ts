@@ -121,9 +121,11 @@ describe('submission documentation', () => {
   });
 
   it('aligns the documented local-review contract with package metadata and CI', async () => {
-    const [readme, design, packageText, workflow] = await Promise.all([
+    const [readme, design, deadlineDesign, hardeningDesign, packageText, workflow] = await Promise.all([
       readFile('README.md', 'utf8'),
       readFile('docs/DESIGN.md', 'utf8'),
+      readFile('docs/superpowers/specs/2026-07-13-five-second-review-deadline-design.md', 'utf8'),
+      readFile('docs/superpowers/specs/2026-07-13-evidence-hardening-design.md', 'utf8'),
       readFile('package.json', 'utf8'),
       readFile('.github/workflows/ci.yml', 'utf8'),
     ]);
@@ -158,15 +160,31 @@ describe('submission documentation', () => {
         'The deadline is an automated-wait target under normal responsive browser scheduling, not an absolute real-time guarantee while a browser event loop is blocked.',
       ].join(' '),
     ];
+    const successfulOcrTiming =
+      'For a real review, Proofline shows measured extraction time only when OCR completes successfully; a deadline result or retry that ends in an OCR error does not display a completed-OCR duration. Batch progress includes a running average with a remaining-time estimate.';
+    const automaticDeadlineTransition =
+      'If the deadline fires first, the active OCR work is aborted and the review automatically changes from processing to a manual-evidence workspace.';
+    const historicalHardeningStatus =
+      '**Status:** Historical design. The OCR deadline/recovery proposal is superseded by [Five-second review-ready deadline design](2026-07-13-five-second-review-deadline-design.md). This file is retained as the original evidence-hardening proposal, not as current deadline behavior.';
 
     for (const document of [readme, design]) {
       const normalizedDocument = document.replace(/\s+/g, ' ').trim();
       for (const paragraph of deadlineParagraphs) {
         expect(normalizedDocument).toContain(paragraph);
       }
+      expect(normalizedDocument).toContain(successfulOcrTiming);
       expect(normalizedDocument).not.toMatch(
         /\b(?:fifteen|15)[-\s]*seconds?\b[^.]*\b(?:stop|recovery|manual)\b/i,
       );
     }
+
+    for (const liveDocument of [readme, design, deadlineDesign]) {
+      expect(liveDocument).not.toMatch(/\bKeep waiting\b/i);
+      expect(liveDocument).not.toMatch(/\bReview manually now\b/i);
+      expect(liveDocument).not.toMatch(/\b(?:fifteen|15)[-\s]*seconds?\b/i);
+    }
+
+    expect(hardeningDesign).toContain(historicalHardeningStatus);
+    expect(deadlineDesign.replace(/\s+/g, ' ').trim()).toContain(automaticDeadlineTransition);
   });
 });

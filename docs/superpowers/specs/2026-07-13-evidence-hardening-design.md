@@ -1,6 +1,6 @@
 # Proofline evidence hardening design
 
-**Status:** approved design, pending written-spec review  
+**Status:** Historical design. The OCR deadline/recovery proposal is superseded by [Five-second review-ready deadline design](2026-07-13-five-second-review-deadline-design.md). This file is retained as the original evidence-hardening proposal, not as current deadline behavior.
 **Date:** 2026-07-13
 
 ## Purpose
