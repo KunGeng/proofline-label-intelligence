@@ -597,6 +597,90 @@ describe('OCR engine facade', () => {
     }
   });
 
+  it('keeps a ready-worker lease quarantined when deadline termination rejects', async () => {
+    vi.useFakeTimers();
+    vi.resetModules();
+    const { createOcrEngine: createIsolatedOcrEngine } = await import('./ocr');
+    const expiredRecognition = deferred<{
+      data: { text: string; words: []; lines: [] };
+    }>();
+    const heldRecognition = deferred<{
+      data: { text: string; words: []; lines: [] };
+    }>();
+    const replacementRecognition = deferred<{
+      data: { text: string; words: []; lines: [] };
+    }>();
+    const expiredTerminate = vi.fn().mockRejectedValue(new Error('ready worker termination failed'));
+    const heldTerminate = vi.fn().mockResolvedValue(undefined);
+    const replacementTerminate = vi.fn().mockResolvedValue(undefined);
+    const expiredRecognize = vi.fn().mockReturnValue(expiredRecognition.promise);
+    const heldRecognize = vi.fn().mockReturnValue(heldRecognition.promise);
+    const replacementRecognize = vi.fn().mockReturnValue(replacementRecognition.promise);
+    const expiredWorker = {
+      recognize: expiredRecognize,
+      terminate: expiredTerminate,
+    } as unknown as OcrWorker;
+    const heldWorker = {
+      recognize: heldRecognize,
+      terminate: heldTerminate,
+    } as unknown as OcrWorker;
+    const replacementWorker = {
+      recognize: replacementRecognize,
+      terminate: replacementTerminate,
+    } as unknown as OcrWorker;
+    const workerFactoryMock = vi
+      .fn()
+      .mockResolvedValueOnce(expiredWorker)
+      .mockResolvedValueOnce(heldWorker)
+      .mockResolvedValueOnce(replacementWorker);
+    const engine = createIsolatedOcrEngine({
+      createWorker: workerFactoryMock as unknown as WorkerFactory,
+      prepareImage: preparedImage,
+    });
+    const heldController = new AbortController();
+    const replacementController = new AbortController();
+    const expired = engine.extract(file(), vi.fn());
+    const held = engine.extract(file(), vi.fn(), {
+      deadlineMs: null,
+      signal: heldController.signal,
+    });
+    let replacement: ReturnType<typeof engine.extract> | undefined;
+
+    try {
+      await waitForWorkerFactory(workerFactoryMock, 2);
+      await waitForMockCall(expiredRecognize);
+      await waitForMockCall(heldRecognize);
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      await expect(expired).resolves.toMatchObject({
+        error: 'deadline-exceeded',
+        source: 'ocr',
+      });
+      await waitForMockCall(expiredTerminate);
+
+      replacement = engine.extract(file(), vi.fn(), {
+        deadlineMs: null,
+        signal: replacementController.signal,
+      });
+      await flushMicrotasks();
+
+      expect(workerFactoryMock).toHaveBeenCalledTimes(2);
+    } finally {
+      heldController.abort();
+      replacementController.abort();
+      expiredRecognition.resolve({ data: { text: 'expired', words: [], lines: [] } });
+      heldRecognition.resolve({ data: { text: 'held', words: [], lines: [] } });
+      replacementRecognition.resolve({ data: { text: 'replacement', words: [], lines: [] } });
+      await Promise.allSettled([
+        expired,
+        held,
+        ...(replacement ? [replacement] : []),
+      ]);
+      await flushMicrotasks();
+      vi.resetModules();
+    }
+  });
+
   it('retires a worker whose recognition passes the deadline', async () => {
     vi.useFakeTimers();
     const pendingRecognition = deferred<{

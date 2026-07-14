@@ -245,6 +245,7 @@ interface PooledWorker {
   listenerRef: ListenerRef;
   broken: boolean;
   retired: boolean;
+  retirement?: Promise<boolean>;
 }
 
 interface WorkerInitialization {
@@ -410,13 +411,23 @@ const initializeWorker = (
   return { result, settled };
 };
 
-const releaseAfterInitialization = (initialization?: WorkerInitialization): void => {
-  if (initialization) {
-    void initialization.settled.then(releaseWorker);
+const releaseAfterInitialization = (
+  initialization?: WorkerInitialization,
+  retirement?: Promise<boolean>,
+): void => {
+  if (!initialization && !retirement) {
+    releaseWorker();
     return;
   }
 
-  releaseWorker();
+  void Promise.all([
+    initialization?.settled,
+    retirement ?? Promise.resolve(true),
+  ]).then(([, retired]) => {
+    if (retired) {
+      releaseWorker();
+    }
+  });
 };
 
 export interface OcrEngine {
@@ -435,18 +446,18 @@ export const createOcrEngine = (
   // compilation, and language-data loading are paid once per slot, not per label.
   const idleWorkers: PooledWorker[] = [];
 
-  const retireWorker = (pooled: PooledWorker): void => {
-    if (pooled.retired) {
-      return;
+  const retireWorker = (pooled: PooledWorker): Promise<boolean> => {
+    if (!pooled.retirement) {
+      pooled.retired = true;
+      pooled.listenerRef.current = undefined;
+      const idleIndex = idleWorkers.indexOf(pooled);
+      if (idleIndex >= 0) {
+        idleWorkers.splice(idleIndex, 1);
+      }
+      pooled.retirement = terminateWorker(pooled.worker);
     }
 
-    pooled.retired = true;
-    pooled.listenerRef.current = undefined;
-    const idleIndex = idleWorkers.indexOf(pooled);
-    if (idleIndex >= 0) {
-      idleWorkers.splice(idleIndex, 1);
-    }
-    void terminateWorker(pooled.worker);
+    return pooled.retirement;
   };
 
   const takeIdleWorker = (): PooledWorker | undefined => {
@@ -501,7 +512,7 @@ export const createOcrEngine = (
       }
 
       if (workerSlotAcquired) {
-        releaseAfterInitialization(initialization);
+        releaseAfterInitialization(initialization, pooled?.retirement);
       }
     }
   };
@@ -710,7 +721,7 @@ export const createOcrEngine = (
       }
 
       if (workerSlotAcquired) {
-        releaseAfterInitialization(initialization);
+        releaseAfterInitialization(initialization, pooled?.retirement);
       }
     }
   };
