@@ -346,6 +346,7 @@ it('opens a filename-only deadline row in manual review without leaving the queu
     progress: 1,
     isManualEvidence: true,
     error: 'OCR stopped after five seconds. Open manual review to inspect the original label.',
+    durationMs: 5_000,
   };
   const originalCreate = URL.createObjectURL;
   const originalRevoke = URL.revokeObjectURL;
@@ -366,6 +367,16 @@ it('opens a filename-only deadline row in manual review without leaving the queu
       screen.getByRole('status', { name: /batch review progress/i }),
     ).toHaveTextContent('1 label requires manual review.');
     await user.selectOptions(screen.getByLabelText(/^show$/i), 'manual_review_required');
+    await user.click(
+      screen.getByRole('button', { name: /view evidence for deadline-triage\.png/i }),
+    );
+    const evidence = screen.getByRole('region', {
+      name: /evidence for deadline-triage\.png/i,
+    });
+    expect(evidence).not.toHaveTextContent(/Extracted locally in/i);
+    expect(
+      screen.getByText('OCR stopped after five seconds. Open manual review to inspect the original label.'),
+    ).toBeInTheDocument();
     await user.click(
       screen.getByRole('button', { name: /open manual review for deadline-triage\.png/i }),
     );
@@ -528,6 +539,12 @@ it('reopens application-backed manual evidence with retry context after a retry 
 
   expect(await screen.findByText('The image could not be decoded.')).toBeInTheDocument();
   await user.click(
+    screen.getByRole('button', { name: /view evidence for deadline-error-retry\.png/i }),
+  );
+  expect(
+    screen.getByRole('region', { name: /evidence for deadline-error-retry\.png/i }),
+  ).not.toHaveTextContent(/Extracted locally in/i);
+  await user.click(
     screen.getByRole('button', {
       name: /open manual review for deadline-error-retry\.png/i,
     }),
@@ -656,6 +673,7 @@ it('renders extracted evidence for a filename-only triage row after its detail c
       reviewFlags: emptyReviewFlags(),
       thumbnailUrl: 'blob:triage-evidence-preview',
       rawText: 'OLD TOM\n45% Alc./Vol.',
+      durationMs: 1_210,
       extraction: {
         brandName: ocrCandidate('OLD TOM'),
         abv: ocrCandidate('45%'),
@@ -680,7 +698,26 @@ it('renders extracted evidence for a filename-only triage row after its detail c
   expect(detail).toHaveTextContent('OLD TOM');
   expect(detail).toHaveTextContent('Raw OCR');
   expect(detail).toHaveTextContent('45% Alc./Vol.');
+  expect(detail).toHaveTextContent('Extracted locally in 1.2 s.');
   expect(screen.getByRole('img', { name: /label preview: triage-evidence\.png/i })).toBeInTheDocument();
+});
+
+it('reports extracted timing for a ready evidence drawer', async () => {
+  const user = userEvent.setup();
+  const item: QueueItem = {
+    ...readyBatchItem('ready-evidence.png'),
+    durationMs: 2_345,
+  };
+
+  render(<App initialBatchItems={[item]} />);
+
+  await user.click(
+    screen.getByRole('button', { name: /view evidence for ready-evidence\.png/i }),
+  );
+
+  expect(
+    screen.getByRole('region', { name: /evidence for ready-evidence\.png/i }),
+  ).toHaveTextContent('Extracted locally in 2.3 s.');
 });
 
 it('opens a ready batch row in full review without re-running OCR', async () => {

@@ -193,7 +193,9 @@ function BatchEvidence({ item }: { item: QueueItem }) {
         <div>
           <p className="eyebrow">Label evidence</p>
           <h3>{item.name}</h3>
-          {item.durationMs !== undefined ? (
+          {(
+            item.status === 'ready' || item.status === 'extracted_pending_application'
+          ) && item.durationMs !== undefined ? (
             <p className="muted">Extracted locally in {formatSeconds(item.durationMs)}.</p>
           ) : null}
         </div>
