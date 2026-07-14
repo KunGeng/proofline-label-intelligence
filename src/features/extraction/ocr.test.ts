@@ -528,6 +528,75 @@ describe('OCR engine facade', () => {
     }
   });
 
+  it('keeps a deadline lease quarantined when its late worker termination rejects', async () => {
+    vi.useFakeTimers();
+    vi.resetModules();
+    const { createOcrEngine: createIsolatedOcrEngine } = await import('./ocr');
+    const expiredPendingWorker = deferred<OcrWorker>();
+    const heldPendingWorker = deferred<OcrWorker>();
+    const lateTerminate = vi.fn().mockRejectedValue(new Error('late termination failed'));
+    const expiredLateWorker = { terminate: lateTerminate } as unknown as OcrWorker;
+    const heldLateTerminate = vi.fn().mockResolvedValue(undefined);
+    const heldLateWorker = { terminate: heldLateTerminate } as unknown as OcrWorker;
+    const replacementWorker = {
+      recognize: vi.fn().mockResolvedValue({
+        data: { text: 'OLD TOM', words: [], lines: [] },
+      }),
+      terminate: vi.fn().mockResolvedValue(undefined),
+    } as unknown as OcrWorker;
+    const workerFactoryMock = vi
+      .fn()
+      .mockReturnValueOnce(expiredPendingWorker.promise)
+      .mockReturnValueOnce(heldPendingWorker.promise)
+      .mockResolvedValueOnce(replacementWorker);
+    const engine = createIsolatedOcrEngine({
+      createWorker: workerFactoryMock as unknown as WorkerFactory,
+      prepareImage: preparedImage,
+    });
+    const heldController = new AbortController();
+    const replacementController = new AbortController();
+    const expired = engine.extract(file(), vi.fn());
+    const held = engine.extract(file(), vi.fn(), {
+      deadlineMs: null,
+      signal: heldController.signal,
+    });
+    let replacement: ReturnType<typeof engine.extract> | undefined;
+
+    try {
+      await waitForWorkerFactory(workerFactoryMock, 2);
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      await expect(expired).resolves.toMatchObject({
+        error: 'deadline-exceeded',
+        source: 'ocr',
+      });
+
+      expiredPendingWorker.resolve(expiredLateWorker);
+      await waitForMockCall(lateTerminate);
+      await flushMicrotasks();
+
+      replacement = engine.extract(file(), vi.fn(), {
+        deadlineMs: null,
+        signal: replacementController.signal,
+      });
+      await flushMicrotasks();
+
+      expect(workerFactoryMock).toHaveBeenCalledTimes(2);
+    } finally {
+      heldController.abort();
+      replacementController.abort();
+      expiredPendingWorker.resolve(expiredLateWorker);
+      heldPendingWorker.resolve(heldLateWorker);
+      await Promise.allSettled([
+        expired,
+        held,
+        ...(replacement ? [replacement] : []),
+      ]);
+      await flushMicrotasks();
+      vi.resetModules();
+    }
+  });
+
   it('retires a worker whose recognition passes the deadline', async () => {
     vi.useFakeTimers();
     const pendingRecognition = deferred<{

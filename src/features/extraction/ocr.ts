@@ -226,11 +226,13 @@ const deadlineExceededResult = (thumbnailUrl?: string): ExtractionJobResult => (
   source: 'ocr',
 });
 
-const terminateWorker = async (worker: OcrWorker): Promise<void> => {
+const terminateWorker = async (worker: OcrWorker): Promise<boolean> => {
   try {
     await worker.terminate();
+    return true;
   } catch {
     // A failed worker is already represented as an unreadable result.
+    return false;
   }
 };
 
@@ -338,7 +340,11 @@ const initializeWorker = (
 
   const resolveInitialization = (worker: OcrWorker): void => {
     if (resultSettled) {
-      void terminateWorker(worker).then(completeSettlement);
+      void terminateWorker(worker).then((terminated) => {
+        if (terminated) {
+          completeSettlement();
+        }
+      });
       return;
     }
 
