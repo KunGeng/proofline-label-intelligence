@@ -2,7 +2,9 @@
 
 > A browser-first evidence-review prototype for U.S. distilled-spirit labels. It turns declared label facts and a label image into a conservative, agent-led review—not an automatic approval.
 
-**Existing public prototype:** [proofline-label-intelligence.kungeng0803.chatgpt.site](https://proofline-label-intelligence.kungeng0803.chatgpt.site)
+**Primary public deployment:** [main.d4qb8x5x7ay8t.amplifyapp.com](https://main.d4qb8x5x7ay8t.amplifyapp.com/)
+
+**Rollback deployment:** [proofline-label-intelligence.kungeng0803.chatgpt.site](https://proofline-label-intelligence.kungeng0803.chatgpt.site)
 
 **Source repository:** [github.com/KunGeng/proofline-label-intelligence](https://github.com/KunGeng/proofline-label-intelligence)
 
@@ -22,7 +24,7 @@ Design rationale and trade-off discussion live in [docs/DESIGN.md](docs/DESIGN.m
 
 ## Try it in 60 seconds
 
-On a local build or the [existing public prototype](https://proofline-label-intelligence.kungeng0803.chatgpt.site):
+On a local build or the [primary public deployment](https://main.d4qb8x5x7ay8t.amplifyapp.com/):
 
 1. Download the sample label: [public/demo/old-tom-bourbon.jpg](public/demo/old-tom-bourbon.jpg) — the app also links it from both intake screens.
 2. Choose **New review**, enter the facts printed on it (brand `OLD TOM DISTILLERY`, class/type `Kentucky Straight Bourbon Whiskey`, ABV `45%`, proof `90`, net contents `750 mL`, producer `Old Tom Distillery, Louisville, KY`), and attach the image.
@@ -202,7 +204,9 @@ The suite covers deterministic validation and warning behavior, parser extractio
 
 ## Deployment
 
-**Release status:** An existing public prototype is available at [proofline-label-intelligence.kungeng0803.chatgpt.site](https://proofline-label-intelligence.kungeng0803.chatgpt.site). It may serve an earlier validated build. The current source revision awaits final verification and deployment. The build remains a static browser-local application; the host serves assets but does not receive label images or application facts from the app.
+**Release status:** The app is deployed through **AWS Amplify Hosting** at [main.d4qb8x5x7ay8t.amplifyapp.com](https://main.d4qb8x5x7ay8t.amplifyapp.com/). It remains a static, browser-local application; the host serves assets but does not receive label images or application facts from the app. The existing [Sites deployment](https://proofline-label-intelligence.kungeng0803.chatgpt.site) remains available as the **Rollback deployment** during the migration.
+
+**AWS Amplify Hosting:** Build from [`amplify.yml`](amplify.yml) and publish `dist/client`. Retain same-origin `ocr/` assets in the published bundle, and do not configure a blanket rewrite while views remain in-memory.
 
 For any static host (including a Sites project), use:
 
@@ -217,7 +221,7 @@ Configure a conventional static host with:
 - **Publish directory:** `dist/client`
 - **Runtime requirement:** serve the `public/ocr/` assets copied into `dist/client/ocr/` from the same origin as the application; do not replace them with a third-party OCR CDN.
 
-The supported Sites deployment packages the complete `dist/` directory because it also includes a small Worker entry at `dist/server/index.js`; its static assets are under `dist/client/`.
+The rollback Sites deployment packages the complete `dist/` directory because it also includes a small Worker entry at `dist/server/index.js`; its static assets are under `dist/client/`.
 
 After publication, smoke-test a real label upload and the batch template from the deployed origin. Confirm that the network panel contains only static-app/OCR asset loads and no image or application-data upload.
 

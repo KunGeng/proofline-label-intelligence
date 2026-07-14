@@ -79,13 +79,14 @@ describe('submission documentation', () => {
     expect(amplify).toMatch(/files:\s*\n\s*- '\*\*\/\*'/);
   });
 
-  it('distinguishes the existing public prototype from a source revision awaiting release', async () => {
+  it('documents a verified Amplify release and preserves the rollback deployment', async () => {
     const readme = await readFile('README.md', 'utf8');
 
+    expect(readme).toMatch(/https:\/\/main\.[a-z0-9-]+\.amplifyapp\.com/);
+    expect(readme).toContain('AWS Amplify Hosting');
+    expect(readme).toContain('Rollback deployment');
     expect(readme).toContain('https://proofline-label-intelligence.kungeng0803.chatgpt.site');
-    expect(readme).toContain('may serve an earlier validated build');
-    expect(readme).toContain('The current source revision awaits final verification and deployment.');
-    expect(readme).not.toContain('**Deployment status:** published as a public Sites deployment');
+    expect(readme).not.toContain('The current source revision awaits final verification and deployment.');
   });
 
   it('aligns the documented local-review contract with package metadata and CI', async () => {
