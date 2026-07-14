@@ -12,15 +12,18 @@ type OcrWorker = Awaited<ReturnType<WorkerFactory>>;
 interface Deferred<T> {
   promise: Promise<T>;
   resolve: (value: T) => void;
+  reject: (reason?: unknown) => void;
 }
 
 const deferred = <T,>(): Deferred<T> => {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((resolvePromise) => {
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
     resolve = resolvePromise;
+    reject = rejectPromise;
   });
 
-  return { promise, resolve };
+  return { promise, resolve, reject };
 };
 
 const preparedImage = async () => ({
@@ -32,16 +35,17 @@ const file = () => new File(['fixture'], 'label.png', { type: 'image/png' });
 
 const waitForWorkerFactory = async (
   createWorker: ReturnType<typeof vi.fn>,
+  expectedCalls = 1,
 ): Promise<void> => {
   for (let attempt = 0; attempt < 10; attempt += 1) {
-    if (createWorker.mock.calls.length > 0) {
+    if (createWorker.mock.calls.length >= expectedCalls) {
       return;
     }
 
     await Promise.resolve();
   }
 
-  throw new Error('Worker factory was not called.');
+  throw new Error(`Worker factory was not called ${expectedCalls} times.`);
 };
 
 const waitForMockCall = async (mock: ReturnType<typeof vi.fn>): Promise<void> => {
@@ -54,6 +58,12 @@ const waitForMockCall = async (mock: ReturnType<typeof vi.fn>): Promise<void> =>
   }
 
   throw new Error('Mock was not called.');
+};
+
+const flushMicrotasks = async (): Promise<void> => {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    await Promise.resolve();
+  }
 };
 
 afterEach(() => {
@@ -207,10 +217,16 @@ describe('OCR engine facade', () => {
     expect(replacementRecognize).toHaveBeenCalledTimes(1);
   });
 
-  it('cancels pending initialization and terminates the worker if it completes late', async () => {
-    const pendingWorker = deferred<OcrWorker>();
-    const lateTerminate = vi.fn().mockResolvedValue(undefined);
-    const lateWorker = { terminate: lateTerminate } as unknown as OcrWorker;
+  it('keeps a cancelled unresolved initializer lease quarantined until late cleanup', async () => {
+    const cancelledPendingWorker = deferred<OcrWorker>();
+    const heldPendingWorker = deferred<OcrWorker>();
+    const cancelledTermination = deferred<void>();
+    const cancelledLateTerminate = vi.fn().mockReturnValue(cancelledTermination.promise);
+    const heldLateTerminate = vi.fn().mockResolvedValue(undefined);
+    const cancelledLateWorker = {
+      terminate: cancelledLateTerminate,
+    } as unknown as OcrWorker;
+    const heldLateWorker = { terminate: heldLateTerminate } as unknown as OcrWorker;
     const replacementRecognize = vi.fn().mockResolvedValue({
       data: { text: 'OLD TOM DISTILLERY', confidence: 99, words: [], lines: [] },
     });
@@ -220,31 +236,75 @@ describe('OCR engine facade', () => {
     } as unknown as OcrWorker;
     const workerFactoryMock = vi
       .fn()
-      .mockReturnValueOnce(pendingWorker.promise)
+      .mockReturnValueOnce(cancelledPendingWorker.promise)
+      .mockReturnValueOnce(heldPendingWorker.promise)
       .mockResolvedValueOnce(replacementWorker);
     const engine = createOcrEngine({
       createWorker: workerFactoryMock as unknown as WorkerFactory,
       prepareImage: preparedImage,
     });
-    const controller = new AbortController();
+    const cancelledController = new AbortController();
+    const heldController = new AbortController();
 
-    const cancelled = engine.extract(file(), vi.fn(), { signal: controller.signal });
-    await waitForWorkerFactory(workerFactoryMock);
-    controller.abort();
-
-    await expect(cancelled).resolves.toMatchObject({
-      error: 'cancelled',
-      source: 'ocr',
+    const cancelled = engine.extract(file(), vi.fn(), {
+      deadlineMs: null,
+      signal: cancelledController.signal,
     });
+    const held = engine.extract(file(), vi.fn(), {
+      deadlineMs: null,
+      signal: heldController.signal,
+    });
+    let replacement: ReturnType<typeof engine.extract> | undefined;
 
-    pendingWorker.resolve(lateWorker);
-    await waitForMockCall(lateTerminate);
+    try {
+      await waitForWorkerFactory(workerFactoryMock, 2);
+      cancelledController.abort();
 
-    await engine.extract(file(), vi.fn());
+      await expect(cancelled).resolves.toMatchObject({
+        error: 'cancelled',
+        source: 'ocr',
+      });
 
-    expect(lateTerminate).toHaveBeenCalledTimes(1);
-    expect(workerFactoryMock).toHaveBeenCalledTimes(2);
-    expect(replacementRecognize).toHaveBeenCalledTimes(1);
+      replacement = engine.extract(file(), vi.fn(), { deadlineMs: null });
+      await flushMicrotasks();
+      const factoryCallsBeforeLateCleanup = workerFactoryMock.mock.calls.length;
+
+      expect(factoryCallsBeforeLateCleanup).toBe(2);
+
+      cancelledPendingWorker.resolve(cancelledLateWorker);
+      await waitForMockCall(cancelledLateTerminate);
+      await flushMicrotasks();
+      expect(workerFactoryMock).toHaveBeenCalledTimes(2);
+
+      cancelledTermination.resolve();
+      await waitForWorkerFactory(workerFactoryMock, 3);
+      await expect(replacement).resolves.toMatchObject({
+        rawText: 'OLD TOM DISTILLERY',
+        source: 'ocr',
+      });
+
+      heldController.abort();
+      await expect(held).resolves.toMatchObject({ error: 'cancelled', source: 'ocr' });
+      heldPendingWorker.resolve(heldLateWorker);
+      await waitForMockCall(heldLateTerminate);
+
+      expect(cancelledLateTerminate).toHaveBeenCalledTimes(1);
+      expect(heldLateTerminate).toHaveBeenCalledTimes(1);
+      expect(workerFactoryMock).toHaveBeenCalledTimes(3);
+      expect(replacementRecognize).toHaveBeenCalledTimes(1);
+    } finally {
+      cancelledTermination.resolve();
+      cancelledController.abort();
+      heldController.abort();
+      cancelledPendingWorker.resolve(cancelledLateWorker);
+      heldPendingWorker.resolve(heldLateWorker);
+      await Promise.allSettled([
+        cancelled,
+        held,
+        ...(replacement ? [replacement] : []),
+      ]);
+      await flushMicrotasks();
+    }
   });
 
   it('returns cancelled when validating progress aborts the extraction', async () => {
@@ -399,31 +459,73 @@ describe('OCR engine facade', () => {
     expect(workerFactoryMock).toHaveBeenCalledTimes(2);
   });
 
-  it('terminates a late-initializing worker after the deadline', async () => {
+  it('does not replace two deadline-expired workers until late initialization cleanup releases a lease', async () => {
     vi.useFakeTimers();
-    const pendingWorker = deferred<OcrWorker>();
-    const lateTerminate = vi.fn().mockResolvedValue(undefined);
+    const firstPendingWorker = deferred<OcrWorker>();
+    const secondPendingWorker = deferred<OcrWorker>();
+    const firstTermination = deferred<void>();
+    const firstLateTerminate = vi.fn().mockReturnValue(firstTermination.promise);
+    const secondLateTerminate = vi.fn().mockResolvedValue(undefined);
+    const firstLateWorker = { terminate: firstLateTerminate } as unknown as OcrWorker;
+    const secondLateWorker = { terminate: secondLateTerminate } as unknown as OcrWorker;
     const replacementRecognize = vi.fn().mockResolvedValue({
       data: { text: 'OLD TOM', words: [], lines: [] },
     });
     const workerFactoryMock = vi
       .fn()
-      .mockReturnValueOnce(pendingWorker.promise)
+      .mockReturnValueOnce(firstPendingWorker.promise)
+      .mockReturnValueOnce(secondPendingWorker.promise)
       .mockResolvedValueOnce({ recognize: replacementRecognize, terminate: vi.fn() });
     const engine = createOcrEngine({
       createWorker: workerFactoryMock as unknown as WorkerFactory,
       prepareImage: preparedImage,
     });
 
-    const expired = engine.extract(file(), vi.fn());
-    await waitForWorkerFactory(workerFactoryMock);
-    await vi.advanceTimersByTimeAsync(5_000);
-    await expect(expired).resolves.toMatchObject({ error: 'deadline-exceeded' });
+    const firstExpired = engine.extract(file(), vi.fn());
+    const secondExpired = engine.extract(file(), vi.fn());
+    let replacement: ReturnType<typeof engine.extract> | undefined;
 
-    pendingWorker.resolve({ terminate: lateTerminate } as unknown as OcrWorker);
-    await waitForMockCall(lateTerminate);
-    await engine.extract(file(), vi.fn(), { deadlineMs: null });
-    expect(replacementRecognize).toHaveBeenCalledTimes(1);
+    try {
+      await waitForWorkerFactory(workerFactoryMock, 2);
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      await expect(firstExpired).resolves.toMatchObject({ error: 'deadline-exceeded' });
+      await expect(secondExpired).resolves.toMatchObject({ error: 'deadline-exceeded' });
+
+      replacement = engine.extract(file(), vi.fn(), { deadlineMs: null });
+      await flushMicrotasks();
+      const factoryCallsBeforeLateCleanup = workerFactoryMock.mock.calls.length;
+
+      expect(factoryCallsBeforeLateCleanup).toBe(2);
+
+      firstPendingWorker.resolve(firstLateWorker);
+      await waitForMockCall(firstLateTerminate);
+      await flushMicrotasks();
+      expect(workerFactoryMock).toHaveBeenCalledTimes(2);
+
+      firstTermination.resolve();
+      await waitForWorkerFactory(workerFactoryMock, 3);
+      await expect(replacement).resolves.toMatchObject({
+        rawText: 'OLD TOM',
+        source: 'ocr',
+      });
+
+      secondPendingWorker.resolve(secondLateWorker);
+      await waitForMockCall(secondLateTerminate);
+      expect(firstLateTerminate).toHaveBeenCalledTimes(1);
+      expect(secondLateTerminate).toHaveBeenCalledTimes(1);
+      expect(replacementRecognize).toHaveBeenCalledTimes(1);
+    } finally {
+      firstTermination.resolve();
+      firstPendingWorker.resolve(firstLateWorker);
+      secondPendingWorker.resolve(secondLateWorker);
+      await Promise.allSettled([
+        firstExpired,
+        secondExpired,
+        ...(replacement ? [replacement] : []),
+      ]);
+      await flushMicrotasks();
+    }
   });
 
   it('retires a worker whose recognition passes the deadline', async () => {
@@ -494,16 +596,19 @@ describe('OCR engine facade', () => {
 });
 
 describe('extractFromImage worker initialization', () => {
-  it('times out pending workers, releases both slots, and terminates late workers', async () => {
+  it('quarantines initialization-timeout leases until late workers are terminated', async () => {
     expect(WORKER_INITIALIZATION_TIMEOUT_MS).toBe(10_000);
+    vi.useFakeTimers();
 
     const firstPendingWorker = deferred<OcrWorker>();
     const secondPendingWorker = deferred<OcrWorker>();
+    const firstLateTerminate = vi.fn().mockResolvedValue(undefined);
+    const secondLateTerminate = vi.fn().mockResolvedValue(undefined);
     const firstLateWorker = {
-      terminate: vi.fn().mockResolvedValue(undefined),
+      terminate: firstLateTerminate,
     } as unknown as OcrWorker;
     const secondLateWorker = {
-      terminate: vi.fn().mockResolvedValue(undefined),
+      terminate: secondLateTerminate,
     } as unknown as OcrWorker;
     const readyWorker = {
       recognize: vi.fn().mockResolvedValue({
@@ -511,42 +616,214 @@ describe('extractFromImage worker initialization', () => {
       }),
       terminate: vi.fn().mockResolvedValue(undefined),
     } as unknown as OcrWorker;
-    const createWorker = vi
+    const workerFactoryMock = vi
       .fn()
       .mockReturnValueOnce(firstPendingWorker.promise)
       .mockReturnValueOnce(secondPendingWorker.promise)
-      .mockResolvedValueOnce(readyWorker) as unknown as WorkerFactory;
+      .mockResolvedValueOnce(readyWorker);
     const extract = createExtractFromImage({
-      createWorker,
+      createWorker: workerFactoryMock as unknown as WorkerFactory,
       prepareImage: preparedImage,
       initializationTimeoutMs: 1,
     });
 
-    const [firstResult, secondResult] = await Promise.all([
-      extract(file(), vi.fn()),
-      extract(file(), vi.fn()),
-    ]);
+    const first = extract(file(), vi.fn(), { deadlineMs: null });
+    const second = extract(file(), vi.fn(), { deadlineMs: null });
+    let recovered: ReturnType<typeof extract> | undefined;
 
-    expect(firstResult).toMatchObject({ error: 'unreadable', source: 'ocr' });
-    expect(secondResult).toMatchObject({ error: 'unreadable', source: 'ocr' });
-    expect(createWorker).toHaveBeenCalledWith(
-      'eng',
-      undefined,
-      expect.objectContaining({ errorHandler: expect.any(Function) }),
+    try {
+      await waitForWorkerFactory(workerFactoryMock, 2);
+      await vi.advanceTimersByTimeAsync(1);
+
+      const [firstResult, secondResult] = await Promise.all([first, second]);
+
+      expect(firstResult).toMatchObject({ error: 'unreadable', source: 'ocr' });
+      expect(secondResult).toMatchObject({ error: 'unreadable', source: 'ocr' });
+      expect(workerFactoryMock).toHaveBeenCalledWith(
+        'eng',
+        undefined,
+        expect.objectContaining({ errorHandler: expect.any(Function) }),
+      );
+
+      recovered = extract(file(), vi.fn(), { deadlineMs: null });
+      await flushMicrotasks();
+      const factoryCallsBeforeLateCleanup = workerFactoryMock.mock.calls.length;
+
+      expect(factoryCallsBeforeLateCleanup).toBe(2);
+
+      firstPendingWorker.resolve(firstLateWorker);
+      await waitForMockCall(firstLateTerminate);
+      await waitForWorkerFactory(workerFactoryMock, 3);
+
+      const recoveredResult = await recovered;
+      expect(recoveredResult).toMatchObject({ source: 'ocr' });
+      expect(recoveredResult.error).toBeUndefined();
+      expect(readyWorker.recognize).toHaveBeenCalledTimes(1);
+
+      secondPendingWorker.resolve(secondLateWorker);
+      await waitForMockCall(secondLateTerminate);
+
+      expect(firstLateTerminate).toHaveBeenCalledTimes(1);
+      expect(secondLateTerminate).toHaveBeenCalledTimes(1);
+    } finally {
+      firstPendingWorker.resolve(firstLateWorker);
+      secondPendingWorker.resolve(secondLateWorker);
+      await Promise.allSettled([
+        first,
+        second,
+        ...(recovered ? [recovered] : []),
+      ]);
+      await flushMicrotasks();
+    }
+  });
+
+  it('releases a quarantined deadline lease when its late factory rejects', async () => {
+    vi.useFakeTimers();
+    const rejectedPendingWorker = deferred<OcrWorker>();
+    const heldPendingWorker = deferred<OcrWorker>();
+    const heldLateTerminate = vi.fn().mockResolvedValue(undefined);
+    const heldLateWorker = { terminate: heldLateTerminate } as unknown as OcrWorker;
+    const readyWorker = {
+      recognize: vi.fn().mockResolvedValue({
+        data: { text: 'OLD TOM DISTILLERY', confidence: 99, words: [], lines: [] },
+      }),
+      terminate: vi.fn().mockResolvedValue(undefined),
+    } as unknown as OcrWorker;
+    const workerFactoryMock = vi
+      .fn()
+      .mockReturnValueOnce(rejectedPendingWorker.promise)
+      .mockReturnValueOnce(heldPendingWorker.promise)
+      .mockResolvedValueOnce(readyWorker);
+    const engine = createOcrEngine({
+      createWorker: workerFactoryMock as unknown as WorkerFactory,
+      prepareImage: preparedImage,
+    });
+    const heldController = new AbortController();
+    const expired = engine.extract(file(), vi.fn());
+    const held = engine.extract(file(), vi.fn(), {
+      deadlineMs: null,
+      signal: heldController.signal,
+    });
+    let replacement: ReturnType<typeof engine.extract> | undefined;
+
+    try {
+      await waitForWorkerFactory(workerFactoryMock, 2);
+      await vi.advanceTimersByTimeAsync(5_000);
+      await expect(expired).resolves.toMatchObject({ error: 'deadline-exceeded' });
+
+      replacement = engine.extract(file(), vi.fn(), { deadlineMs: null });
+      await flushMicrotasks();
+      const factoryCallsBeforeLateSettlement = workerFactoryMock.mock.calls.length;
+
+      expect(factoryCallsBeforeLateSettlement).toBe(2);
+
+      rejectedPendingWorker.reject(new Error('late factory rejection'));
+      await waitForWorkerFactory(workerFactoryMock, 3);
+      await expect(replacement).resolves.toMatchObject({
+        rawText: 'OLD TOM DISTILLERY',
+        source: 'ocr',
+      });
+
+      heldController.abort();
+      await expect(held).resolves.toMatchObject({ error: 'cancelled', source: 'ocr' });
+      heldPendingWorker.resolve(heldLateWorker);
+      await waitForMockCall(heldLateTerminate);
+      expect(readyWorker.terminate).not.toHaveBeenCalled();
+    } finally {
+      heldController.abort();
+      rejectedPendingWorker.reject(new Error('late factory rejection'));
+      heldPendingWorker.resolve(heldLateWorker);
+      await Promise.allSettled([
+        expired,
+        held,
+        ...(replacement ? [replacement] : []),
+      ]);
+      await flushMicrotasks();
+    }
+  });
+
+  it('quarantines a timed-out prewarm lease until its late worker is terminated', async () => {
+    vi.useFakeTimers();
+    const prewarmPendingWorker = deferred<OcrWorker>();
+    const heldPendingWorker = deferred<OcrWorker>();
+    const prewarmLateTerminate = vi.fn().mockResolvedValue(undefined);
+    const heldLateTerminate = vi.fn().mockResolvedValue(undefined);
+    const readyWorker = {
+      recognize: vi.fn().mockResolvedValue({
+        data: { text: 'OLD TOM DISTILLERY', confidence: 99, words: [], lines: [] },
+      }),
+      terminate: vi.fn().mockResolvedValue(undefined),
+    } as unknown as OcrWorker;
+    const workerFactoryMock = vi
+      .fn()
+      .mockReturnValueOnce(prewarmPendingWorker.promise)
+      .mockReturnValueOnce(heldPendingWorker.promise)
+      .mockResolvedValueOnce(readyWorker);
+    const engine = createOcrEngine({
+      createWorker: workerFactoryMock as unknown as WorkerFactory,
+      prepareImage: preparedImage,
+      initializationTimeoutMs: 1,
+    });
+    const heldController = new AbortController();
+
+    const prewarm = engine.prewarm();
+    const prewarmOutcome = prewarm.then(
+      () => undefined,
+      (error: unknown) => error,
     );
+    let held: ReturnType<typeof engine.extract> | undefined;
+    let replacement: ReturnType<typeof engine.extract> | undefined;
 
-    const recoveredResult = await extract(file(), vi.fn());
+    try {
+      await waitForWorkerFactory(workerFactoryMock);
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(prewarmOutcome).resolves.toMatchObject({
+        message: 'OCR worker initialization timed out.',
+      });
 
-    expect(recoveredResult).toMatchObject({ source: 'ocr' });
-    expect(recoveredResult.error).toBeUndefined();
-    expect(readyWorker.recognize).toHaveBeenCalledTimes(1);
+      held = engine.extract(file(), vi.fn(), {
+        deadlineMs: null,
+        signal: heldController.signal,
+      });
+      await waitForWorkerFactory(workerFactoryMock, 2);
 
-    firstPendingWorker.resolve(firstLateWorker);
-    secondPendingWorker.resolve(secondLateWorker);
-    await new Promise((resolve) => setTimeout(resolve, 0));
+      replacement = engine.extract(file(), vi.fn(), { deadlineMs: null });
+      await flushMicrotasks();
+      const factoryCallsBeforeLateCleanup = workerFactoryMock.mock.calls.length;
 
-    expect(firstLateWorker.terminate).toHaveBeenCalledTimes(1);
-    expect(secondLateWorker.terminate).toHaveBeenCalledTimes(1);
+      expect(factoryCallsBeforeLateCleanup).toBe(2);
+
+      prewarmPendingWorker.resolve({
+        terminate: prewarmLateTerminate,
+      } as unknown as OcrWorker);
+      await waitForMockCall(prewarmLateTerminate);
+      await waitForWorkerFactory(workerFactoryMock, 3);
+
+      await expect(replacement).resolves.toMatchObject({
+        rawText: 'OLD TOM DISTILLERY',
+        source: 'ocr',
+      });
+
+      heldController.abort();
+      await expect(held).resolves.toMatchObject({ error: 'cancelled', source: 'ocr' });
+      heldPendingWorker.resolve({ terminate: heldLateTerminate } as unknown as OcrWorker);
+      await waitForMockCall(heldLateTerminate);
+
+      expect(prewarmLateTerminate).toHaveBeenCalledTimes(1);
+      expect(heldLateTerminate).toHaveBeenCalledTimes(1);
+    } finally {
+      heldController.abort();
+      prewarmPendingWorker.resolve({
+        terminate: prewarmLateTerminate,
+      } as unknown as OcrWorker);
+      heldPendingWorker.resolve({ terminate: heldLateTerminate } as unknown as OcrWorker);
+      await Promise.allSettled([
+        prewarmOutcome,
+        ...(held ? [held] : []),
+        ...(replacement ? [replacement] : []),
+      ]);
+      await flushMicrotasks();
+    }
   });
 
   it('turns worker-message failures into unreadable initialization results', async () => {

@@ -245,6 +245,11 @@ interface PooledWorker {
   retired: boolean;
 }
 
+interface WorkerInitialization {
+  result: Promise<PooledWorker>;
+  settled: Promise<void>;
+}
+
 const now = (): number =>
   typeof performance !== 'undefined' && typeof performance.now === 'function'
     ? performance.now()
@@ -278,96 +283,135 @@ const initializeWorker = (
   listenerRef: ListenerRef,
   initializationTimeoutMs: number,
   signal?: AbortSignal,
-): Promise<PooledWorker> =>
-  new Promise((resolve, reject) => {
-    let settled = false;
-    let pooled: PooledWorker | undefined;
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-    let abortInitialization: (() => void) | undefined;
+): WorkerInitialization => {
+  let resolveResult!: (pooled: PooledWorker) => void;
+  let rejectResult!: (reason: Error) => void;
+  const result = new Promise<PooledWorker>((resolve, reject) => {
+    resolveResult = resolve;
+    rejectResult = reject;
+  });
+  let resolveSettled!: () => void;
+  const settled = new Promise<void>((resolve) => {
+    resolveSettled = resolve;
+  });
+  let resultSettled = false;
+  let factoryStarted = false;
+  let settlementComplete = false;
+  let pooled: PooledWorker | undefined;
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  let abortInitialization: (() => void) | undefined;
 
-    const clearInitializationResources = (): void => {
-      if (timeoutId !== undefined) {
-        clearTimeout(timeoutId);
-      }
+  const clearInitializationResources = (): void => {
+    if (timeoutId !== undefined) {
+      clearTimeout(timeoutId);
+    }
 
-      if (abortInitialization) {
-        signal?.removeEventListener('abort', abortInitialization);
-      }
-    };
+    if (abortInitialization) {
+      signal?.removeEventListener('abort', abortInitialization);
+    }
+  };
 
-    const rejectInitialization = (reason: unknown): void => {
-      if (settled) {
-        return;
-      }
-
-      settled = true;
-      listenerRef.current = undefined;
-      clearInitializationResources();
-
-      reject(
-        reason instanceof Error
-          ? reason
-          : new Error('OCR worker initialization failed.'),
-      );
-    };
-
-    const resolveInitialization = (worker: OcrWorker): void => {
-      if (settled) {
-        void terminateWorker(worker);
-        return;
-      }
-
-      settled = true;
-      clearInitializationResources();
-
-      pooled = { worker, listenerRef, broken: false, retired: false };
-      resolve(pooled);
-    };
-
-    abortInitialization = () => {
-      rejectInitialization(new OcrCancellationError());
-    };
-
-    if (signal?.aborted) {
-      abortInitialization();
+  const completeSettlement = (): void => {
+    if (settlementComplete) {
       return;
     }
 
-    signal?.addEventListener('abort', abortInitialization, { once: true });
+    settlementComplete = true;
+    resolveSettled();
+  };
 
-    timeoutId = setTimeout(
-      () => rejectInitialization(new Error('OCR worker initialization timed out.')),
-      initializationTimeoutMs,
-    );
-
-    try {
-      void createWorker('eng', undefined, {
-        workerPath: `${LOCAL_OCR_PATH}worker.min.js`,
-        corePath: LOCAL_OCR_PATH,
-        langPath: LOCAL_OCR_PATH,
-        gzip: true,
-        workerBlobURL: false,
-        logger: (message) => {
-          const listener = listenerRef.current;
-          if (listener) {
-            reportWorkerProgress(listener)(message);
-          }
-        },
-        errorHandler: (reason) => {
-          if (!settled) {
-            rejectInitialization(reason);
-            return;
-          }
-
-          if (pooled) {
-            pooled.broken = true;
-          }
-        },
-      }).then(resolveInitialization, rejectInitialization);
-    } catch (error) {
-      rejectInitialization(error);
+  const rejectInitialization = (reason: unknown): boolean => {
+    if (resultSettled) {
+      return false;
     }
-  });
+
+    resultSettled = true;
+    listenerRef.current = undefined;
+    clearInitializationResources();
+    rejectResult(
+      reason instanceof Error
+        ? reason
+        : new Error('OCR worker initialization failed.'),
+    );
+    return true;
+  };
+
+  const resolveInitialization = (worker: OcrWorker): void => {
+    if (resultSettled) {
+      void terminateWorker(worker).then(completeSettlement);
+      return;
+    }
+
+    resultSettled = true;
+    clearInitializationResources();
+    pooled = { worker, listenerRef, broken: false, retired: false };
+    resolveResult(pooled);
+    completeSettlement();
+  };
+
+  const rejectFactory = (reason: unknown): void => {
+    rejectInitialization(reason);
+    completeSettlement();
+  };
+
+  abortInitialization = () => {
+    if (rejectInitialization(new OcrCancellationError()) && !factoryStarted) {
+      completeSettlement();
+    }
+  };
+
+  if (signal?.aborted) {
+    abortInitialization();
+    return { result, settled };
+  }
+
+  signal?.addEventListener('abort', abortInitialization, { once: true });
+
+  timeoutId = setTimeout(
+    () => rejectInitialization(new Error('OCR worker initialization timed out.')),
+    initializationTimeoutMs,
+  );
+
+  try {
+    factoryStarted = true;
+    void createWorker('eng', undefined, {
+      workerPath: `${LOCAL_OCR_PATH}worker.min.js`,
+      corePath: LOCAL_OCR_PATH,
+      langPath: LOCAL_OCR_PATH,
+      gzip: true,
+      workerBlobURL: false,
+      logger: (message) => {
+        const listener = listenerRef.current;
+        if (listener) {
+          reportWorkerProgress(listener)(message);
+        }
+      },
+      errorHandler: (reason) => {
+        if (!resultSettled) {
+          rejectInitialization(reason);
+          return;
+        }
+
+        if (pooled) {
+          pooled.broken = true;
+        }
+      },
+    }).then(resolveInitialization, rejectFactory);
+  } catch (error) {
+    rejectFactory(error);
+  }
+
+  return { result, settled };
+};
+
+const releaseAfterInitialization = (initialization?: WorkerInitialization): void => {
+  if (initialization) {
+    void initialization.settled.then(releaseWorker);
+    return;
+  }
+
+  releaseWorker();
+};
 
 export interface OcrEngine {
   extract: ExtractFromImage;
@@ -418,6 +462,7 @@ export const createOcrEngine = (
     const workerSlotRequest = acquireWorker();
     const workerSlotAcquired = await workerSlotRequest.promise;
     let pooled: PooledWorker | undefined;
+    let initialization: WorkerInitialization | undefined;
     let reusable = false;
 
     try {
@@ -425,11 +470,15 @@ export const createOcrEngine = (
         return;
       }
 
-      pooled = takeIdleWorker() ?? await initializeWorker(
-        createWorker,
-        { current: undefined },
-        initializationTimeoutMs,
-      );
+      pooled = takeIdleWorker();
+      if (!pooled) {
+        initialization = initializeWorker(
+          createWorker,
+          { current: undefined },
+          initializationTimeoutMs,
+        );
+        pooled = await initialization.result;
+      }
 
       if (
         !pooled.broken &&
@@ -446,7 +495,7 @@ export const createOcrEngine = (
       }
 
       if (workerSlotAcquired) {
-        releaseWorker();
+        releaseAfterInitialization(initialization);
       }
     }
   };
@@ -470,6 +519,7 @@ export const createOcrEngine = (
     let thumbnailUrl: string | undefined;
     let workerSlotRequest: WorkerSlotRequest | undefined;
     let workerSlotAcquired = false;
+    let initialization: WorkerInitialization | undefined;
     let completed = false;
     let cancelPreparation: (() => void) | undefined;
     let cancelRecognition: (() => void) | undefined;
@@ -549,12 +599,13 @@ export const createOcrEngine = (
       if (pooled) {
         pooled.listenerRef.current = onProgress;
       } else {
-        pooled = await initializeWorker(
+        initialization = initializeWorker(
           createWorker,
           { current: onProgress },
           initializationTimeoutMs,
           internalAbort.signal,
         );
+        pooled = await initialization.result;
       }
 
       const workerWaitMs = now() - workerWaitStartedAt;
@@ -653,7 +704,7 @@ export const createOcrEngine = (
       }
 
       if (workerSlotAcquired) {
-        releaseWorker();
+        releaseAfterInitialization(initialization);
       }
     }
   };
