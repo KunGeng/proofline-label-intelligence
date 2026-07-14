@@ -1951,6 +1951,11 @@ td:nth-child(4) {
   background: #fff0c8;
 }
 
+.batch-status--manual {
+  color: #6a3f0a;
+  background: #f8e2b8;
+}
+
 .batch-status--error {
   color: #33434c;
   background: #dae4e8;
@@ -1983,6 +1988,18 @@ td:nth-child(4) {
 
 .batch-row-actions .text-button + .text-button {
   margin-left: 0;
+}
+
+.manual-evidence-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  margin: 12px 0;
+}
+
+.manual-evidence-actions p {
+  margin: 0;
 }
 
 .batch-evidence-row > td {

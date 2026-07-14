@@ -1,5 +1,6 @@
 import type { ApplicationData, LabelExtraction } from '../../domain/types';
 import type { ExtractFromImage } from '../extraction/types';
+import { clearManualCandidate, setManualCandidate } from '../review/manualEvidence';
 import { createReviewQueue, queueWorkerFromExtractor } from './queue';
 
 const file = (name: string, type = 'image/png') =>
@@ -250,6 +251,143 @@ describe('createReviewQueue', () => {
       error: 'The image could not be decoded.',
     });
     expect(queue.items[0]?.result).toBeUndefined();
+  });
+
+  it('maps a deadline result to manual_review_required and preserves its review inputs', async () => {
+    const original = file('deadline.png');
+    const queue = createReviewQueue([
+      { id: 'deadline', file: original, application },
+    ], async () => ({
+      extraction: {},
+      rawText: '',
+      source: 'ocr',
+      thumbnailUrl: 'data:image/jpeg;base64,preview',
+      error: 'deadline-exceeded',
+    }), 1);
+
+    await queue.start();
+
+    expect(queue.items[0]).toMatchObject({
+      status: 'manual_review_required',
+      file: original,
+      application,
+      thumbnailUrl: 'data:image/jpeg;base64,preview',
+      progress: 1,
+    });
+    expect(queue.items[0]?.result).toBeUndefined();
+  });
+
+  it('continues the queue after a deadline item completes', async () => {
+    const calls: string[] = [];
+    const queue = createReviewQueue([
+      { id: 'deadline', file: file('deadline.png') },
+      { id: 'next', file: file('next.png') },
+    ], async (job) => {
+      calls.push(job.id);
+      return job.id === 'deadline'
+        ? { extraction: {}, rawText: '', source: 'ocr', error: 'deadline-exceeded' }
+        : successfulResult();
+    }, 1);
+
+    await queue.start();
+
+    expect(calls).toEqual(['deadline', 'next']);
+    expect(queue.items.map((item) => item.status)).toEqual([
+      'manual_review_required',
+      'extracted_pending_application',
+    ]);
+  });
+
+  it('preserves manual values and deliberate blanks when a deadline row retries', async () => {
+    let attempts = 0;
+    const queue = createReviewQueue(
+      [{ id: 'retry', file: file('retry.png'), application }],
+      async () => {
+        attempts += 1;
+        return attempts === 1
+          ? { extraction: {}, rawText: '', source: 'ocr', error: 'deadline-exceeded' }
+          : {
+              extraction: {
+                brandName: {
+                  value: 'OCR BRAND', rawText: 'OCR BRAND', confidence: 0.99, source: 'ocr',
+                },
+                proof: {
+                  value: '90 Proof', rawText: '90 Proof', confidence: 0.99, source: 'ocr',
+                },
+                abv: { value: '45%', rawText: '45%', confidence: 0.99, source: 'ocr' },
+              },
+              rawText: 'OCR BRAND 90 Proof 45%',
+              source: 'ocr' as const,
+            };
+      },
+      1,
+    );
+
+    await queue.start();
+    const item = queue.items[0]!;
+    item.extraction = clearManualCandidate(
+      setManualCandidate({}, 'brandName', 'HUMAN BRAND'),
+      'proof',
+    );
+    item.manualEvidenceLocks = { brandName: true, proof: true };
+    item.reviewFlags.warningTypographyConfirmed = true;
+    await queue.retry('retry');
+
+    expect(item).toMatchObject({
+      status: 'ready',
+      extraction: {
+        brandName: { value: 'HUMAN BRAND', source: 'agent' },
+        abv: { value: '45%', source: 'ocr' },
+      },
+      reviewFlags: { warningTypographyConfirmed: true },
+      manualEvidenceLocks: { brandName: true, proof: true },
+    });
+    expect(item.extraction?.proof).toBeUndefined();
+  });
+
+  it('keeps a manual draft when its OCR retry returns a normal error', async () => {
+    let attempts = 0;
+    const queue = createReviewQueue(
+      [{ id: 'retry-error', file: file('retry-error.png'), application }],
+      async () => {
+        attempts += 1;
+        return attempts === 1
+          ? { extraction: {}, rawText: '', source: 'ocr', error: 'deadline-exceeded' }
+          : {
+              extraction: {
+                brandName: {
+                  value: 'OCR BRAND', rawText: 'OCR BRAND', confidence: 0.99, source: 'ocr',
+                },
+                proof: {
+                  value: '90 Proof', rawText: '90 Proof', confidence: 0.99, source: 'ocr',
+                },
+              },
+              rawText: 'OCR BRAND 90 Proof',
+              source: 'ocr' as const,
+              error: 'The image could not be decoded.',
+            };
+      },
+      1,
+    );
+
+    await queue.start();
+    const item = queue.items[0]!;
+    item.extraction = clearManualCandidate(
+      setManualCandidate({}, 'brandName', 'HUMAN BRAND'),
+      'proof',
+    );
+    item.manualEvidenceLocks = { brandName: true, proof: true };
+    await queue.retry('retry-error');
+
+    expect(item).toMatchObject({
+      status: 'error',
+      error: 'The image could not be decoded.',
+      extraction: {
+        brandName: { value: 'HUMAN BRAND', source: 'agent' },
+      },
+      manualEvidenceLocks: { brandName: true, proof: true },
+    });
+    expect(item.extraction?.proof).toBeUndefined();
   });
 
   it('retries an error item with its original file and replaces its result', async () => {

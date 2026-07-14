@@ -313,6 +313,146 @@ it('labels extraction-only batch rows as requiring application data', () => {
   ).not.toBeInTheDocument();
 });
 
+it('opens a filename-only deadline row in manual review without leaving the queue automatically', async () => {
+  const user = userEvent.setup();
+  const item: QueueItem = {
+    id: 'deadline-triage',
+    file: new File(['label'], 'deadline-triage.png', { type: 'image/png' }),
+    name: 'deadline-triage.png',
+    size: 5,
+    reviewFlags: emptyReviewFlags(),
+    status: 'manual_review_required',
+    progress: 1,
+    isManualEvidence: true,
+    error: 'OCR stopped after five seconds. Open manual review to inspect the original label.',
+  };
+  const originalCreate = URL.createObjectURL;
+  const originalRevoke = URL.revokeObjectURL;
+  Object.defineProperty(URL, 'createObjectURL', {
+    configurable: true,
+    value: vi.fn(() => 'blob:deadline-triage'),
+  });
+  Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() });
+
+  try {
+    render(<App initialBatchItems={[item]} />);
+
+    expect(
+      screen.getByText('Manual review required', { selector: '.batch-status--manual' }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Extraction error')).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('status', { name: /batch review progress/i }),
+    ).toHaveTextContent('1 label requires manual review.');
+    await user.selectOptions(screen.getByLabelText(/^show$/i), 'manual_review_required');
+    await user.click(
+      screen.getByRole('button', { name: /open manual review for deadline-triage\.png/i }),
+    );
+    expect(screen.getByRole('heading', { name: /manual evidence entry/i })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('img', { name: /label preview: deadline-triage\.png/i }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /back to batch/i }));
+    expect(
+      screen.getByText('Manual review required', { selector: '.batch-status--manual' }),
+    ).toBeInTheDocument();
+  } finally {
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: originalCreate,
+    });
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: originalRevoke,
+    });
+  }
+});
+
+it('opens an application-backed deadline row with comparison fields without rerunning OCR', async () => {
+  const user = userEvent.setup();
+  const item: QueueItem = {
+    id: 'deadline-application',
+    file: new File(['label'], 'deadline-application.png', { type: 'image/png' }),
+    name: 'deadline-application.png',
+    size: 5,
+    application: batchApplication,
+    reviewFlags: emptyReviewFlags(),
+    status: 'manual_review_required',
+    progress: 1,
+    extraction: {},
+    isManualEvidence: true,
+    error: 'OCR stopped after five seconds. Open manual review to inspect the original label.',
+  };
+
+  render(<App initialBatchItems={[item]} />);
+
+  await user.click(
+    screen.getByRole('button', { name: /open manual review for deadline-application\.png/i }),
+  );
+
+  expect(screen.getByRole('heading', { name: /field comparison/i })).toBeInTheDocument();
+  expect(screen.getByRole('columnheader', { name: /application/i })).toBeInTheDocument();
+  expect(screen.queryByRole('heading', { name: /manual evidence entry/i })).not.toBeInTheDocument();
+  expect(extractFromImage).not.toHaveBeenCalled();
+});
+
+it('keeps batch manual values and deliberate blanks when retry OCR returns another deadline', async () => {
+  const user = userEvent.setup();
+  vi.mocked(extractFromImage)
+    .mockResolvedValueOnce({
+      extraction: {},
+      rawText: '',
+      source: 'ocr',
+      error: 'deadline-exceeded',
+    })
+    .mockResolvedValueOnce({
+      extraction: {},
+      rawText: '',
+      source: 'ocr',
+      error: 'deadline-exceeded',
+    });
+
+  render(<App />);
+  await user.click(screen.getByRole('button', { name: /review a batch/i }));
+  await user.upload(
+    screen.getByLabelText(/^choose label images$/i),
+    new File(['label'], 'deadline-retry.png', { type: 'image/png' }),
+  );
+  await user.click(screen.getByRole('button', { name: /begin batch review/i }));
+  const initialManualReview = await screen.findByRole('button', {
+    name: /open manual review for deadline-retry\.png/i,
+  });
+  expect(
+    screen.getByRole('button', { name: /retry OCR for deadline-retry\.png/i }),
+  ).toBeInTheDocument();
+  await user.click(initialManualReview);
+  await user.click(screen.getByRole('button', { name: /add brand name candidate/i }));
+  await user.type(
+    screen.getByRole('textbox', { name: /brand name agent-entered candidate/i }),
+    'HUMAN BRAND',
+  );
+  await user.click(screen.getByRole('button', { name: /save brand name candidate/i }));
+  await user.click(screen.getByRole('button', { name: /add proof candidate/i }));
+  await user.type(
+    screen.getByRole('textbox', { name: /proof agent-entered candidate/i }),
+    '90 Proof',
+  );
+  await user.click(screen.getByRole('button', { name: /save proof candidate/i }));
+  await user.click(screen.getByRole('button', { name: /remove proof evidence/i }));
+  await user.click(screen.getByRole('button', { name: /^retry OCR$/i }));
+
+  const returningManualReview = await screen.findByRole('button', {
+    name: /open manual review for deadline-retry\.png/i,
+  });
+  await waitFor(() => {
+    expect(returningManualReview).toHaveFocus();
+  });
+  await user.click(returningManualReview);
+  expect(screen.getByText('HUMAN BRAND')).toBeInTheDocument();
+  expect(screen.queryByText('90 Proof')).not.toBeInTheDocument();
+  expect(extractFromImage).toHaveBeenCalledTimes(2);
+});
+
 it('renders extracted evidence for a filename-only triage row after its detail control opens', async () => {
   const user = userEvent.setup();
   const extractionOnly: QueueItem[] = [

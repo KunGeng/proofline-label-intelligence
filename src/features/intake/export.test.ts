@@ -94,6 +94,28 @@ describe('serializeResults', () => {
     ])).toContain(' =SUM(A1:A2),error');
   });
 
+  it('keeps a deadline manual-review status and reason in the existing status and error columns', () => {
+    const result = serializeResults([
+      item({
+        status: 'manual_review_required',
+        result: undefined,
+        error: 'OCR stopped after five seconds. Open manual review to inspect the original label.',
+      }),
+    ]);
+
+    expect(result.split('\n')[1]?.split(',')).toEqual([
+      'example.png',
+      'manual_review_required',
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      'OCR stopped after five seconds. Open manual review to inspect the original label.',
+    ]);
+  });
+
   it('returns the header alone for an empty queue', () => {
     expect(serializeResults([])).toBe(
       'filename,status,overallState,matchCount,mismatchCount,needsReviewCount,unreadableCount,findings,error',

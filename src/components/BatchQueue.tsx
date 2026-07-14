@@ -27,6 +27,10 @@ import {
   type ReviewQueue,
 } from '../features/intake/queue';
 import {
+  clearManualCandidate,
+  setManualCandidate,
+} from '../features/review/manualEvidence';
+import {
   QueueEmptyIllustration,
   ScopeNotice,
   SectionCard,
@@ -45,6 +49,7 @@ type QueueFilter =
   | 'in_progress'
   | 'extracted_pending_application'
   | 'error'
+  | 'manual_review_required'
   | ReviewState;
 
 type FieldCounts = Record<ReviewState, number>;
@@ -69,6 +74,7 @@ const queueStatusLabels: Record<QueueStatus, string> = {
   ready: 'Ready for review',
   error: 'Extraction error',
   extracted_pending_application: 'Application data required',
+  manual_review_required: 'Manual review required',
 };
 
 const inProgressStatuses = new Set<QueueStatus>([
@@ -82,6 +88,7 @@ const processedStatuses = new Set<QueueStatus>([
   'ready',
   'error',
   'extracted_pending_application',
+  'manual_review_required',
 ]);
 
 const emptyCounts = (): FieldCounts => ({
@@ -252,6 +259,10 @@ function BatchEvidence({ item }: { item: QueueItem }) {
 }
 
 const statusFor = (item: QueueItem) => {
+  if (item.status === 'manual_review_required') {
+    return <span className="batch-status batch-status--manual">Manual review required</span>;
+  }
+
   if (item.status === 'extracted_pending_application') {
     return <span className="batch-status batch-status--triage">Application data required</span>;
   }
@@ -271,30 +282,32 @@ const statusFor = (item: QueueItem) => {
 };
 
 const revalidateItem = (item: QueueItem): void => {
-  if (!item.application || !item.extraction) {
+  if (!item.application) {
     return;
   }
 
   item.result = validateLabel({
     application: item.application,
-    extraction: item.extraction,
+    extraction: item.extraction ?? {},
     flags: item.reviewFlags,
   });
 };
 
-const noop = (): void => undefined;
-
 interface BatchFullReviewProps {
   item: QueueItem;
   onBack: () => void;
+  onRetry: (id: string) => void;
   onCorrectCandidate: (field: CandidateField, value: string) => void;
+  onClearCandidate: (field: CandidateField) => void;
   onUpdateFlags: (flags: Partial<ReviewFlags>) => void;
 }
 
 function BatchFullReview({
   item,
   onBack,
+  onRetry,
   onCorrectCandidate,
+  onClearCandidate,
   onUpdateFlags,
 }: BatchFullReviewProps) {
   const [imageUrl, setImageUrl] = useState<string>();
@@ -323,12 +336,20 @@ function BatchFullReview({
     };
   }, [item.file]);
 
+  const displayResult = item.application
+    ? item.result ?? validateLabel({
+        application: item.application,
+        extraction: item.extraction ?? {},
+        flags: item.reviewFlags,
+      })
+    : undefined;
+
   return (
     <div className="batch-full-review">
       <ReviewDesk
         title={item.name}
-        extraction={item.extraction!}
-        result={item.result}
+        extraction={item.extraction ?? {}}
+        result={displayResult}
         phase="ready"
         rawText={item.rawText ?? ''}
         imageUrl={imageUrl}
@@ -336,10 +357,11 @@ function BatchFullReview({
         isGuidedDemo={false}
         shouldFocusReviewHeading
         shouldFocusManualDisclosure={false}
-        slowExtraction={false}
-        stopAvailable={false}
-        onManualReview={noop}
-        onStopOcr={noop}
+        manualEvidence={Boolean(item.isManualEvidence)}
+        onRetryOcr={() => {
+          onRetry(item.id);
+          onBack();
+        }}
         warningTypographyConfirmed={item.reviewFlags.warningTypographyConfirmed}
         onWarningTypographyConfirmed={(confirmed) =>
           onUpdateFlags({ warningTypographyConfirmed: confirmed })
@@ -349,6 +371,7 @@ function BatchFullReview({
           onUpdateFlags({ warningLegibilityConfirmed: confirmed })
         }
         onCorrectCandidate={onCorrectCandidate}
+        onClearCandidate={onClearCandidate}
         exitLabel="Back to batch"
         onExit={onBack}
       />
@@ -465,11 +488,18 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
     const trigger = fullReviewTriggerRefs.current[returnFocusItemId];
     if (trigger) {
       trigger.focus();
-    } else {
-      queueFilterRef.current?.focus();
+      setReturnFocusItemId(undefined);
+      return;
     }
+
+    const returningItem = items.find((item) => item.id === returnFocusItemId);
+    if (returningItem && inProgressStatuses.has(returningItem.status)) {
+      return;
+    }
+
+    queueFilterRef.current?.focus();
     setReturnFocusItemId(undefined);
-  }, [fullReviewItemId, returnFocusItemId]);
+  }, [fullReviewItemId, items, returnFocusItemId]);
 
   const validateCsv = (text: string | undefined, files: File[]): void => {
     setCsvErrors(text !== undefined && files.length > 0 ? parseBatchCsv(text, files).errors : []);
@@ -599,23 +629,35 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
 
       setItems((current) => {
         const item = current.find((candidate) => candidate.id === itemId);
-        const extraction = item?.extraction;
-        if (!item?.application || !extraction) {
+        if (!item) {
           return current;
         }
 
-        const previous = extraction[field];
-        item.extraction = {
-          ...extraction,
-          [field]: previous
-            ? {
-                ...previous,
-                value,
-                confidence: 1,
-                source: 'agent',
-              }
-            : { value, rawText: '', confidence: 1, source: 'agent' },
-        };
+        item.extraction = setManualCandidate(item.extraction ?? {}, field, value);
+        item.manualEvidenceLocks = { ...item.manualEvidenceLocks, [field]: true };
+        revalidateItem(item);
+
+        return [...current];
+      });
+    },
+    [fullReviewItemId],
+  );
+
+  const clearBatchCandidate = useCallback(
+    (field: CandidateField): void => {
+      const itemId = fullReviewItemId;
+      if (!itemId) {
+        return;
+      }
+
+      setItems((current) => {
+        const item = current.find((candidate) => candidate.id === itemId);
+        if (!item) {
+          return current;
+        }
+
+        item.extraction = clearManualCandidate(item.extraction ?? {}, field);
+        item.manualEvidenceLocks = { ...item.manualEvidenceLocks, [field]: true };
         revalidateItem(item);
 
         return [...current];
@@ -633,7 +675,7 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
 
       setItems((current) => {
         const item = current.find((candidate) => candidate.id === itemId);
-        if (!item?.application || !item.extraction) {
+        if (!item) {
           return current;
         }
 
@@ -701,6 +743,7 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
 
   const processedCount = items.filter((item) => processedStatuses.has(item.status)).length;
   const errorCount = items.filter((item) => item.status === 'error').length;
+  const manualReviewCount = items.filter((item) => item.status === 'manual_review_required').length;
   const hasQueue = items.length > 0;
   const hasBatchData = hasQueue || selectedFiles.length > 0 || csvPresent;
   const measuredDurations = items
@@ -715,8 +758,14 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
         (averageDurationMs * (items.length - processedCount)) / BATCH_WORKER_COUNT,
       )
     : undefined;
-  const batchProgressSummary = errorCount > 0
+  const errorSummary = errorCount > 0
     ? `${errorCount} extraction error${errorCount === 1 ? '' : 's'} need${errorCount === 1 ? 's' : ''} attention.`
+    : undefined;
+  const manualReviewSummary = manualReviewCount > 0
+    ? `${manualReviewCount} label${manualReviewCount === 1 ? '' : 's'} require${manualReviewCount === 1 ? 's' : ''} manual review.`
+    : undefined;
+  const batchProgressSummary = errorSummary || manualReviewSummary
+    ? [errorSummary, manualReviewSummary].filter(Boolean).join(' ')
     : isProcessing
       ? averageDurationMs !== undefined
         ? `Two local workers are processing label evidence — averaging ${formatSeconds(averageDurationMs)} per label, ${remainingEstimate} remaining.`
@@ -724,13 +773,15 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
       : 'Two local workers maximum';
   const fullReviewItem = items.find((item) => item.id === fullReviewItemId);
 
-  if (fullReviewItem?.application && fullReviewItem.extraction) {
+  if (fullReviewItem) {
     return (
       <BatchFullReview
         key={fullReviewItem.id}
         item={fullReviewItem}
         onBack={closeFullReview}
+        onRetry={retry}
         onCorrectCandidate={updateBatchCandidate}
+        onClearCandidate={clearBatchCandidate}
         onUpdateFlags={updateBatchReviewFlags}
       />
     );
@@ -878,6 +929,7 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
                 <option value="unreadable">Unreadable</option>
                 <option value="match">Matches</option>
                 <option value="extracted_pending_application">Needs application data</option>
+                <option value="manual_review_required">Manual review required</option>
                 <option value="error">Extraction errors</option>
                 <option value="in_progress">In progress</option>
               </select>
@@ -925,6 +977,7 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
                   {visibleItems.map((item) => {
                     const counts = countsFor(item);
                     const canViewEvidence = processedStatuses.has(item.status);
+                    const requiresManualReview = item.status === 'manual_review_required';
                     const isEvidenceOpen = expandedEvidenceId === item.id;
                     return (
                       <Fragment key={item.id}>
@@ -983,6 +1036,29 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
                                   aria-label={`Open full review for ${item.name}`}
                                 >
                                   Open full review
+                                </button>
+                              ) : null}
+                              {requiresManualReview ? (
+                                <button
+                                  ref={(element) => {
+                                    fullReviewTriggerRefs.current[item.id] = element;
+                                  }}
+                                  type="button"
+                                  className="text-button"
+                                  onClick={() => openFullReview(item.id)}
+                                  aria-label={`Open manual review for ${item.name}`}
+                                >
+                                  Open manual review
+                                </button>
+                              ) : null}
+                              {requiresManualReview && activeGenerationRef.current ? (
+                                <button
+                                  type="button"
+                                  className="text-button"
+                                  onClick={() => retry(item.id)}
+                                  aria-label={`Retry OCR for ${item.name}`}
+                                >
+                                  Retry OCR
                                 </button>
                               ) : null}
                               {item.status === 'error' && activeGenerationRef.current ? (

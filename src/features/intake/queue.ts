@@ -6,6 +6,10 @@ import type {
   VerificationResult,
 } from '../../domain/types';
 import type { ExtractFromImage, ExtractionJobResult } from '../extraction/types';
+import {
+  mergeUntouchedOcrEvidence,
+  type ManualEvidenceLocks,
+} from '../review/manualEvidence';
 
 const MAX_SELECTED_FILES = 300;
 const MAX_CONCURRENT_WORKERS = 2;
@@ -31,7 +35,8 @@ export type QueueStatus =
   | 'validating'
   | 'ready'
   | 'error'
-  | 'extracted_pending_application';
+  | 'extracted_pending_application'
+  | 'manual_review_required';
 
 export interface QueueJob {
   id: string;
@@ -55,6 +60,8 @@ export interface QueueItem {
   thumbnailUrl?: string;
   error?: string;
   durationMs?: number;
+  manualEvidenceLocks?: ManualEvidenceLocks;
+  isManualEvidence?: boolean;
 }
 
 export type QueueWorker = (
@@ -165,7 +172,25 @@ const releaseObjectUrl = (url: string | undefined): void => {
   URL.revokeObjectURL(url);
 };
 
+const retainThumbnail = (item: QueueItem, nextThumbnail: string | undefined): void => {
+  if (!nextThumbnail || nextThumbnail === item.thumbnailUrl) {
+    return;
+  }
+
+  releaseObjectUrl(item.thumbnailUrl);
+  item.thumbnailUrl = nextThumbnail;
+};
+
 const resetForRetry = (item: QueueItem): void => {
+  if (item.isManualEvidence) {
+    item.status = 'queued';
+    item.progress = 0;
+    item.result = undefined;
+    item.error = undefined;
+    item.durationMs = undefined;
+    return;
+  }
+
   releaseObjectUrl(item.thumbnailUrl);
   item.status = 'queued';
   item.progress = 0;
@@ -188,6 +213,27 @@ const discardItem = (item: QueueItem): void => {
   item.error = undefined;
   item.durationMs = undefined;
   item.progress = 0;
+};
+
+const mergeOutputEvidence = (
+  item: QueueItem,
+  output: ExtractionJobResult,
+): LabelExtraction => item.isManualEvidence
+  ? mergeUntouchedOcrEvidence(
+      item.extraction ?? {},
+      output.extraction,
+      item.manualEvidenceLocks ?? {},
+    )
+  : output.extraction;
+
+const applySuccessfulOutput = (
+  item: QueueItem,
+  output: ExtractionJobResult,
+): void => {
+  item.extraction = mergeOutputEvidence(item, output);
+  item.rawText = output.rawText || item.rawText;
+  item.source = output.source;
+  retainThumbnail(item, output.thumbnailUrl);
 };
 
 export const queueWorkerFromExtractor = (
@@ -272,17 +318,29 @@ export const createReviewQueue = (
         return;
       }
 
-      item.extraction = output.extraction;
-      item.rawText = output.rawText;
-      item.source = output.source;
-      item.thumbnailUrl = output.thumbnailUrl;
       item.durationMs = output.durationMs ?? Date.now() - startedAt;
 
+      if (output.error === 'deadline-exceeded') {
+        item.extraction = mergeOutputEvidence(item, output);
+        item.rawText = output.rawText || item.rawText;
+        item.source = output.source;
+        retainThumbnail(item, output.thumbnailUrl);
+        item.result = undefined;
+        item.status = 'manual_review_required';
+        item.isManualEvidence = true;
+        item.progress = 1;
+        item.error = 'OCR stopped after five seconds. Open manual review to inspect the original label.';
+        return;
+      }
+
       if (output.error) {
+        applySuccessfulOutput(item, output);
         item.status = 'error';
         item.error = output.error;
         return;
       }
+
+      applySuccessfulOutput(item, output);
 
       if (!item.application) {
         item.status = 'extracted_pending_application';
@@ -293,7 +351,7 @@ export const createReviewQueue = (
       item.status = 'validating';
       item.result = validateLabel({
         application: item.application,
-        extraction: output.extraction,
+        extraction: item.extraction ?? {},
         flags: item.reviewFlags,
       });
       item.status = 'ready';
