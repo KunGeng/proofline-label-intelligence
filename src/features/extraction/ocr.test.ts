@@ -340,7 +340,15 @@ describe('OCR engine facade', () => {
     const engine = createOcrEngine({ prepareImage });
 
     const result = engine.extract(file(), vi.fn());
-    await vi.advanceTimersByTimeAsync(5_000);
+    let settled = false;
+    void result.then(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(4_999);
+
+    expect(settled).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(1);
 
     await expect(result).resolves.toMatchObject({
       error: 'deadline-exceeded',
@@ -376,7 +384,19 @@ describe('OCR engine facade', () => {
     await expect(waiting).resolves.toMatchObject({ error: 'deadline-exceeded' });
     expect(workerFactoryMock).toHaveBeenCalledTimes(2);
     releaseRecognition.resolve();
-    await Promise.all([first, second]);
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+
+    expect(firstResult).toMatchObject({ rawText: 'ONE', source: 'ocr' });
+    expect(firstResult.error).toBeUndefined();
+    expect(secondResult).toMatchObject({ rawText: 'TWO', source: 'ocr' });
+    expect(secondResult.error).toBeUndefined();
+
+    const afterRelease = await engine.extract(file(), vi.fn());
+
+    expect(afterRelease).toMatchObject({ source: 'ocr' });
+    expect(afterRelease.error).toBeUndefined();
+    expect(['ONE', 'TWO']).toContain(afterRelease.rawText);
+    expect(workerFactoryMock).toHaveBeenCalledTimes(2);
   });
 
   it('terminates a late-initializing worker after the deadline', async () => {
