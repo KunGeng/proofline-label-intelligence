@@ -48,6 +48,35 @@ git add src/features/extraction/ocr.ts src/features/extraction/ocr.test.ts
 git commit -m "fix: retain OCR lease after late termination failure"
 ```
 
+### Task 1b: Retain the active lease when a ready worker cannot terminate
+
+**Files:**
+
+- Modify: `src/features/extraction/ocr.ts`
+- Modify: `src/features/extraction/ocr.test.ts`
+
+**Interfaces:**
+
+- Consumes: `PooledWorker`, `retireWorker()`, `WorkerInitialization.settled`, and the worker-slot release path.
+- Produces: a shared retirement-settlement result for an already initialized worker; the caller result remains prompt while a failed retirement keeps its active lease quarantined.
+
+- [ ] **Step 1: Add an isolated RED deadline-retirement regression**
+
+Start two ready workers with pending recognition in a dynamically imported OCR module. Let the first default-deadline extraction expire, make its `terminate()` reject, retain the second extraction with an abort controller, and prove a third uncapped extraction never reaches its worker factory even though the first caller has already received `deadline-exceeded`.
+
+- [ ] **Step 2: Couple retirement and lease release**
+
+Store one `Promise<boolean>` retirement result on each pooled worker. `retireWorker()` must be idempotent, remove the worker from idle reuse immediately, and return that shared promise. When an extraction or prewarm path releases an acquired slot, wait for both initialization settlement and retirement success; release only after a successful retirement. Never await cleanup on the caller-visible deadline/cancellation path.
+
+- [ ] **Step 3: Verify and commit**
+
+```sh
+PATH="$RUNTIME_NODE:$PATH" "$RUNTIME_NODE/node" "$PNPM_MJS" exec vitest run src/features/extraction/ocr.test.ts
+PATH="$RUNTIME_NODE:$PATH" "$RUNTIME_NODE/node" "$PNPM_MJS" typecheck
+git add src/features/extraction/ocr.ts src/features/extraction/ocr.test.ts
+git commit -m "fix: quarantine failed ready-worker termination"
+```
+
 ### Task 2: Make manual OCR retry idempotent
 
 **Files:**
