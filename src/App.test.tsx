@@ -453,6 +453,154 @@ it('keeps batch manual values and deliberate blanks when retry OCR returns anoth
   expect(extractFromImage).toHaveBeenCalledTimes(2);
 });
 
+it('reopens preserved batch manual evidence after a manual retry returns a generic error', async () => {
+  const user = userEvent.setup();
+  vi.mocked(extractFromImage)
+    .mockResolvedValueOnce({
+      extraction: {},
+      rawText: '',
+      source: 'ocr',
+      error: 'deadline-exceeded',
+    })
+    .mockResolvedValueOnce({
+      extraction: { brandName: ocrCandidate('OCR BRAND') },
+      rawText: 'OCR BRAND',
+      source: 'ocr',
+      error: 'The image could not be decoded.',
+    });
+
+  render(<App />);
+  await user.click(screen.getByRole('button', { name: /review a batch/i }));
+  await user.upload(
+    screen.getByLabelText(/^choose label images$/i),
+    new File(['label'], 'deadline-error-retry.png', { type: 'image/png' }),
+  );
+  await user.click(screen.getByRole('button', { name: /begin batch review/i }));
+  await user.click(
+    await screen.findByRole('button', {
+      name: /open manual review for deadline-error-retry\.png/i,
+    }),
+  );
+  await user.click(screen.getByRole('button', { name: /add brand name candidate/i }));
+  await user.type(
+    screen.getByRole('textbox', { name: /brand name agent-entered candidate/i }),
+    'HUMAN BRAND',
+  );
+  await user.click(screen.getByRole('button', { name: /save brand name candidate/i }));
+  await user.click(screen.getByRole('button', { name: /^retry OCR$/i }));
+
+  expect(await screen.findByText('The image could not be decoded.')).toBeInTheDocument();
+  await user.click(
+    screen.getByRole('button', {
+      name: /open manual review for deadline-error-retry\.png/i,
+    }),
+  );
+
+  expect(screen.getByText('HUMAN BRAND')).toBeInTheDocument();
+  expect(extractFromImage).toHaveBeenCalledTimes(2);
+});
+
+it('reopens preserved batch manual evidence after a manual retry completes without application data', async () => {
+  const user = userEvent.setup();
+  vi.mocked(extractFromImage)
+    .mockResolvedValueOnce({
+      extraction: {},
+      rawText: '',
+      source: 'ocr',
+      error: 'deadline-exceeded',
+    })
+    .mockResolvedValueOnce({
+      extraction: {
+        brandName: ocrCandidate('OCR BRAND'),
+        proof: ocrCandidate('90 Proof'),
+        abv: ocrCandidate('45%'),
+      },
+      rawText: 'OCR BRAND 90 Proof 45%',
+      source: 'ocr',
+    });
+
+  render(<App />);
+  await user.click(screen.getByRole('button', { name: /review a batch/i }));
+  await user.upload(
+    screen.getByLabelText(/^choose label images$/i),
+    new File(['label'], 'deadline-no-app-retry.png', { type: 'image/png' }),
+  );
+  await user.click(screen.getByRole('button', { name: /begin batch review/i }));
+  await user.click(
+    await screen.findByRole('button', {
+      name: /open manual review for deadline-no-app-retry\.png/i,
+    }),
+  );
+  await user.click(screen.getByRole('button', { name: /add brand name candidate/i }));
+  await user.type(
+    screen.getByRole('textbox', { name: /brand name agent-entered candidate/i }),
+    'HUMAN BRAND',
+  );
+  await user.click(screen.getByRole('button', { name: /save brand name candidate/i }));
+  await user.click(screen.getByRole('button', { name: /add proof candidate/i }));
+  await user.type(
+    screen.getByRole('textbox', { name: /proof agent-entered candidate/i }),
+    '90 Proof',
+  );
+  await user.click(screen.getByRole('button', { name: /save proof candidate/i }));
+  await user.click(screen.getByRole('button', { name: /remove proof evidence/i }));
+  await user.click(screen.getByRole('button', { name: /^retry OCR$/i }));
+
+  expect(await screen.findByText('Application data required')).toBeInTheDocument();
+  await user.click(
+    screen.getByRole('button', {
+      name: /open manual review for deadline-no-app-retry\.png/i,
+    }),
+  );
+
+  expect(screen.getByText('HUMAN BRAND')).toBeInTheDocument();
+  expect(screen.getByText('45%')).toBeInTheDocument();
+  expect(screen.getByRole('row', { name: /proof/i })).toHaveTextContent('No evidence entered');
+  expect(extractFromImage).toHaveBeenCalledTimes(2);
+});
+
+it('returns focus to a direct Retry OCR row action after another deadline', async () => {
+  const user = userEvent.setup();
+  const retryResult = deferred<ExtractionJobResult>();
+  vi.mocked(extractFromImage)
+    .mockResolvedValueOnce({
+      extraction: {},
+      rawText: '',
+      source: 'ocr',
+      error: 'deadline-exceeded',
+    })
+    .mockReturnValueOnce(retryResult.promise);
+
+  render(<App />);
+  await user.click(screen.getByRole('button', { name: /review a batch/i }));
+  await user.upload(
+    screen.getByLabelText(/^choose label images$/i),
+    new File(['label'], 'deadline-row-retry.png', { type: 'image/png' }),
+  );
+  await user.click(screen.getByRole('button', { name: /begin batch review/i }));
+
+  await user.click(
+    await screen.findByRole('button', { name: /retry OCR for deadline-row-retry\.png/i }),
+  );
+  await waitFor(() => {
+    expect(screen.getByText('0 of 1 processed')).toBeInTheDocument();
+  });
+
+  retryResult.resolve({
+    extraction: {},
+    rawText: '',
+    source: 'ocr',
+    error: 'deadline-exceeded',
+  });
+
+  const restoredRetry = await screen.findByRole('button', {
+    name: /retry OCR for deadline-row-retry\.png/i,
+  });
+  await waitFor(() => {
+    expect(restoredRetry).toHaveFocus();
+  });
+});
+
 it('renders extracted evidence for a filename-only triage row after its detail control opens', async () => {
   const user = userEvent.setup();
   const extractionOnly: QueueItem[] = [

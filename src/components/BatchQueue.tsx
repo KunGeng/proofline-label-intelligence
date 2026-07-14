@@ -54,6 +54,13 @@ type QueueFilter =
 
 type FieldCounts = Record<ReviewState, number>;
 
+type ReturnFocusAction = 'manual' | 'retry';
+
+interface ReturnFocusTarget {
+  itemId: string;
+  action: ReturnFocusAction;
+}
+
 interface BatchQueueProps {
   initialItems?: QueueItem[];
 }
@@ -392,13 +399,16 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
   const [filenameQuery, setFilenameQuery] = useState('');
   const [expandedEvidenceId, setExpandedEvidenceId] = useState<string>();
   const [fullReviewItemId, setFullReviewItemId] = useState<string>();
-  const [returnFocusItemId, setReturnFocusItemId] = useState<string>();
+  const [returnFocusTarget, setReturnFocusTarget] = useState<ReturnFocusTarget>();
   const [isProcessing, setIsProcessing] = useState(false);
   const selectedFilesRef = useRef<File[]>([]);
   const activeGenerationRef = useRef<QueueGeneration | undefined>(undefined);
   const csvRequestRef = useRef(0);
   const mountedRef = useRef(true);
   const fullReviewTriggerRefs = useRef<
+    Partial<Record<string, HTMLButtonElement | null>>
+  >({});
+  const retryTriggerRefs = useRef<
     Partial<Record<string, HTMLButtonElement | null>>
   >({});
   const queueFilterRef = useRef<HTMLSelectElement>(null);
@@ -471,7 +481,7 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
     setItems(initialItems ? [...initialItems] : []);
     setExpandedEvidenceId(undefined);
     setFullReviewItemId(undefined);
-    setReturnFocusItemId(undefined);
+    setReturnFocusTarget(undefined);
 
     return () => {
       mountedRef.current = false;
@@ -481,25 +491,28 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
   }, [initialItems, retireActiveGeneration]);
 
   useEffect(() => {
-    if (fullReviewItemId !== undefined || !returnFocusItemId) {
+    if (fullReviewItemId !== undefined || !returnFocusTarget) {
       return;
     }
 
-    const trigger = fullReviewTriggerRefs.current[returnFocusItemId];
+    const { itemId, action } = returnFocusTarget;
+    const trigger = action === 'retry'
+      ? retryTriggerRefs.current[itemId] ?? fullReviewTriggerRefs.current[itemId]
+      : fullReviewTriggerRefs.current[itemId];
     if (trigger) {
       trigger.focus();
-      setReturnFocusItemId(undefined);
+      setReturnFocusTarget(undefined);
       return;
     }
 
-    const returningItem = items.find((item) => item.id === returnFocusItemId);
+    const returningItem = items.find((item) => item.id === itemId);
     if (returningItem && inProgressStatuses.has(returningItem.status)) {
       return;
     }
 
     queueFilterRef.current?.focus();
-    setReturnFocusItemId(undefined);
-  }, [fullReviewItemId, items, returnFocusItemId]);
+    setReturnFocusTarget(undefined);
+  }, [fullReviewItemId, items, returnFocusTarget]);
 
   const validateCsv = (text: string | undefined, files: File[]): void => {
     setCsvErrors(text !== undefined && files.length > 0 ? parseBatchCsv(text, files).errors : []);
@@ -620,6 +633,20 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
     void trackQueueWork(generation, () => generation.queue.retry(id));
   };
 
+  const retryWithFocus = (id: string): void => {
+    const generation = activeGenerationRef.current;
+    if (!generation) {
+      return;
+    }
+
+    setReturnFocusTarget({ itemId: id, action: 'retry' });
+    void trackQueueWork(generation, () => {
+      const retryWork = generation.queue.retry(id);
+      syncItems(generation);
+      return retryWork;
+    });
+  };
+
   const updateBatchCandidate = useCallback(
     (field: CandidateField, value: string): void => {
       const itemId = fullReviewItemId;
@@ -689,13 +716,13 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
   );
 
   const openFullReview = (id: string): void => {
-    setReturnFocusItemId(undefined);
+    setReturnFocusTarget(undefined);
     setFullReviewItemId(id);
   };
 
   const closeFullReview = (): void => {
     if (fullReviewItemId) {
-      setReturnFocusItemId(fullReviewItemId);
+      setReturnFocusTarget({ itemId: fullReviewItemId, action: 'manual' });
     }
     setFullReviewItemId(undefined);
   };
@@ -717,7 +744,7 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
     setFilenameQuery('');
     setExpandedEvidenceId(undefined);
     setFullReviewItemId(undefined);
-    setReturnFocusItemId(undefined);
+    setReturnFocusTarget(undefined);
   };
 
   const visibleItems = useMemo(() => {
@@ -978,6 +1005,11 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
                     const counts = countsFor(item);
                     const canViewEvidence = processedStatuses.has(item.status);
                     const requiresManualReview = item.status === 'manual_review_required';
+                    const canOpenManualReview = Boolean(item.isManualEvidence) && (
+                      requiresManualReview ||
+                      item.status === 'error' ||
+                      (item.status === 'extracted_pending_application' && !item.application)
+                    );
                     const isEvidenceOpen = expandedEvidenceId === item.id;
                     return (
                       <Fragment key={item.id}>
@@ -1038,7 +1070,7 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
                                   Open full review
                                 </button>
                               ) : null}
-                              {requiresManualReview ? (
+                              {canOpenManualReview ? (
                                 <button
                                   ref={(element) => {
                                     fullReviewTriggerRefs.current[item.id] = element;
@@ -1053,9 +1085,12 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
                               ) : null}
                               {requiresManualReview && activeGenerationRef.current ? (
                                 <button
+                                  ref={(element) => {
+                                    retryTriggerRefs.current[item.id] = element;
+                                  }}
                                   type="button"
                                   className="text-button"
-                                  onClick={() => retry(item.id)}
+                                  onClick={() => retryWithFocus(item.id)}
                                   aria-label={`Retry OCR for ${item.name}`}
                                 >
                                   Retry OCR
@@ -1063,6 +1098,9 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
                               ) : null}
                               {item.status === 'error' && activeGenerationRef.current ? (
                                 <button
+                                  ref={(element) => {
+                                    retryTriggerRefs.current[item.id] = element;
+                                  }}
                                   type="button"
                                   className="text-button"
                                   onClick={() => retry(item.id)}
