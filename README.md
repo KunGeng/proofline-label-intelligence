@@ -110,13 +110,26 @@ This is a static React + TypeScript + Vite application. There is no application 
 
 ## Performance
 
-Five seconds is a usability recovery point, not a promised extraction time. The prototype
-makes timing and reviewer choices visible instead of claiming a universal result:
+Five seconds is an automated-wait target, not a promised extraction time. The prototype
+makes timing and reviewer choices visible instead of claiming a universal result.
+
+After five seconds of automated OCR, Proofline opens manual evidence review. The deadline
+starts when active extraction begins and includes image preparation, worker acquisition,
+initialization, and recognition. The original label and submitted facts remain available;
+reviewers may enter evidence immediately or explicitly retry OCR.
+
+Batch items that reach the deadline are marked Manual review required while the queue
+continues. They retain their original file and any available evidence, including when no
+application row was supplied.
+
+The local benchmark explicitly disables the five-second OCR deadline. It does so to
+ensure its first and warm-worker timings remain an honest measurement of the current
+device. The deadline is an automated-wait target under normal responsive browser
+scheduling, not an absolute real-time guarantee while a browser event loop is blocked.
 
 - **Intent-triggered worker readiness.** A single worker may be warmed after intake intent;
   the second worker is demand-created for batch work. Labels are downscaled to a
   2,000-pixel longest edge before recognition.
-- **Five-/fifteen-second recovery.** After five seconds, a reviewer may keep waiting or review manually. Manual mode opens the original label with empty OCR candidates, and a late OCR result cannot overwrite the human-led review. At fifteen seconds, a reviewer may stop OCR and review manually. That explicit action discards the active worker.
 - **Measured, not claimed.** The app displays measured extraction time for every real review
   and batch progress includes a running average with a remaining-time estimate.
 - **Local benchmark.** `Run local sample benchmark` fetches the shipped sample from the same
@@ -127,8 +140,8 @@ makes timing and reviewer choices visible instead of claiming a universal result
   not present fixture speed as OCR speed.
 
 Local CPU recognition can still take longer on large, noisy, or stylized labels,
-especially on older hardware. That is a deliberate browser-local trade; the evaluator
-can recover to manual review rather than wait indefinitely.
+especially on older hardware. That is a deliberate browser-local trade; manual evidence
+review keeps the evaluation moving without overstating a wall-clock guarantee.
 
 ## Validation behavior
 

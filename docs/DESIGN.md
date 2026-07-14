@@ -83,17 +83,27 @@ network-permitted endpoint exists.
 
 ### Performance and the five-second expectation
 
-Five seconds is a reviewer recovery point, not a universal performance promise. Design
-responses:
+Five seconds is an automated-wait target, not a universal performance promise.
+
+After five seconds of automated OCR, Proofline opens manual evidence review. The deadline
+starts when active extraction begins and includes image preparation, worker acquisition,
+initialization, and recognition. The original label and submitted facts remain available;
+reviewers may enter evidence immediately or explicitly retry OCR.
+
+Batch items that reach the deadline are marked Manual review required while the queue
+continues. They retain their original file and any available evidence, including when no
+application row was supplied.
+
+The local benchmark explicitly disables the five-second OCR deadline. It does so to
+ensure its first and warm-worker timings remain an honest measurement of the current
+device. The deadline is an automated-wait target under normal responsive browser
+scheduling, not an absolute real-time guarantee while a browser event loop is blocked.
+
+Design responses:
 
 - Images longer than 2,000 px are downscaled before recognition. One prewarmed worker
   may shorten initialization after deliberate intake; it does not make every first
   extraction equivalent.
-- After five seconds, a reviewer may keep waiting or review manually. Manual mode uses
-  the original label and empty OCR candidates, and a late OCR result cannot overwrite
-  the human-led review.
-- At fifteen seconds, a reviewer may stop OCR and review manually. This is an explicit
-  reviewer action that discards the active worker; it is not an automatic timeout.
 - The UI reports **measured extraction time** per label (single review and batch rows),
   so the prototype's actual speed on the evaluator's hardware is visible rather than
   claimed. The batch progress line shows a running average and a remaining-time

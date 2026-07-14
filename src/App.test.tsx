@@ -1265,6 +1265,18 @@ it('runs an in-memory same-origin sample benchmark with honest run labels and ti
     expect.objectContaining({ signal: expect.any(AbortSignal) }),
   );
   expect(extractFromImage).toHaveBeenCalledTimes(2);
+  expect(extractFromImage).toHaveBeenNthCalledWith(
+    1,
+    expect.any(File),
+    expect.any(Function),
+    expect.objectContaining({ deadlineMs: null }),
+  );
+  expect(extractFromImage).toHaveBeenNthCalledWith(
+    2,
+    expect.any(File),
+    expect.any(Function),
+    expect.objectContaining({ deadlineMs: null }),
+  );
   const firstRun = screen.getByRole('article', { name: /first sample run/i });
   expect(within(firstRun).getByText('Total: 1.2 s')).toBeInTheDocument();
   expect(within(firstRun).getByText('Preparation: 0.1 s')).toBeInTheDocument();

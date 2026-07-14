@@ -124,7 +124,7 @@ export function BenchmarkPanel({ onClose }: BenchmarkPanelProps) {
         if (isCurrent()) {
           setProgress(`Running first sample run… ${Math.round(value * 100)}% complete.`);
         }
-      }, { signal: abortController.signal });
+      }, { signal: abortController.signal, deadlineMs: null });
       if (!isCurrent() || first.error === 'cancelled') {
         return;
       }
@@ -135,7 +135,7 @@ export function BenchmarkPanel({ onClose }: BenchmarkPanelProps) {
         if (isCurrent()) {
           setProgress(`Running second warm-worker run… ${Math.round(value * 100)}% complete.`);
         }
-      }, { signal: abortController.signal });
+      }, { signal: abortController.signal, deadlineMs: null });
       if (!isCurrent() || second.error === 'cancelled') {
         return;
       }

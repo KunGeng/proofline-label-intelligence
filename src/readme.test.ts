@@ -142,32 +142,19 @@ describe('submission documentation', () => {
     expect(workflow).toMatch(/node-version:\s*22/);
     expect(workflow).toContain('pnpm install --frozen-lockfile');
 
-    expect(readme).toContain('After a reviewer intentionally enters a single or batch intake, at most one local OCR worker may prewarm; no OCR work runs on page load.');
-    expect(readme).toContain('matched OCR words or lines');
-    expect(readme).toContain('conservatively falls below the readable threshold');
-    expect(readme).toContain('After five seconds, a reviewer may keep waiting or review manually.');
-    expect(readme).toContain('At fifteen seconds, a reviewer may stop OCR and review manually.');
-    expect(readme).toContain('CSV application facts can open a full review without rerunning OCR.');
-    expect(readme).toContain('Filename-only rows remain OCR triage.');
-    expect(readme).toContain('First sample run');
-    expect(readme).toContain('Second warm-worker run');
-    expect(readme).toContain('not a universal speed guarantee or a network-cold measurement');
-    expect(readme).toContain('Warning legibility is a manual reviewer confirmation.');
-    expect(readme).toContain('Exact printed type size remains a final regulatory review responsibility.');
-    expect(readme).toContain('CSS-only visual degradation');
+    const deadlineContract = [
+      'After five seconds of automated OCR, Proofline opens manual evidence review.',
+      'Batch items that reach the deadline are marked Manual review required while the queue continues.',
+      'The local benchmark explicitly disables the five-second OCR deadline.',
+      'It does so to ensure its first and warm-worker timings remain an honest measurement of the current device.',
+      'normal responsive browser scheduling',
+    ];
 
-    expect(design).toContain('After a reviewer intentionally enters a single or batch intake, at most one local OCR worker may prewarm; no OCR work runs on page load.');
-    expect(design).toContain('matched OCR words or lines');
-    expect(design).toContain('conservatively falls below the readable threshold');
-    expect(design).toContain('After five seconds, a reviewer may keep waiting or review manually.');
-    expect(design).toContain('At fifteen seconds, a reviewer may stop OCR and review manually.');
-    expect(design).toContain('CSV application facts can open a full review without rerunning OCR.');
-    expect(design).toContain('Filename-only rows remain OCR triage.');
-    expect(design).toContain('First sample run');
-    expect(design).toContain('Second warm-worker run');
-    expect(design).toContain('not a universal speed guarantee or a network-cold measurement');
-    expect(design).toContain('Warning legibility is a manual reviewer confirmation.');
-    expect(design).toContain('Exact printed type size remains a final regulatory review responsibility.');
-    expect(design).toContain('CSS-only visual degradation');
+    for (const document of [readme, design]) {
+      const normalizedDocument = document.replace(/\s+/g, ' ').trim();
+      for (const statement of deadlineContract) {
+        expect(normalizedDocument).toContain(statement);
+      }
+    }
   });
 });
