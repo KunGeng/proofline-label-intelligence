@@ -62,14 +62,6 @@ const startManualReview = async (user: ReturnType<typeof userEvent.setup>): Prom
   await user.click(await fillManualReviewForm(user));
 };
 
-const startPendingManualReview = async (
-  user: ReturnType<typeof userEvent.setup>,
-): Promise<void> => {
-  const submit = await fillManualReviewForm(user);
-  vi.useFakeTimers();
-  fireEvent.click(submit);
-};
-
 const emptyReviewFlags = (): ReviewFlags => ({
   warningTypographyConfirmed: false,
   warningLegibilityConfirmed: false,
@@ -793,127 +785,95 @@ it('labels a manual review with next reviewer actions', async () => {
   ).not.toBeInTheDocument();
 });
 
-it('offers manual review after five seconds and ignores a late OCR result', async () => {
+it('opens preserved manual evidence review for a deadline result and focuses its disclosure', async () => {
   const user = userEvent.setup();
-  const result = deferred<ExtractionJobResult>();
   vi.stubGlobal('URL', {
     createObjectURL: vi.fn().mockReturnValue('blob:old-tom'),
     revokeObjectURL: vi.fn(),
   });
-  vi.mocked(extractFromImage).mockReturnValueOnce(result.promise);
-
-  await startPendingManualReview(user);
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(5_000);
+  vi.mocked(extractFromImage).mockResolvedValueOnce({
+    extraction: {},
+    rawText: '',
+    source: 'ocr',
+    error: 'deadline-exceeded',
   });
 
-  expect(screen.getByText(/this is taking longer than expected/i)).toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: /review manually now/i }));
-  expect(screen.getByText(/manual evidence mode/i)).toBeInTheDocument();
+  await startManualReview(user);
 
-  await act(async () => {
-    result.resolve({
+  expect(await screen.findByText(/OCR stopped after five seconds/i)).toHaveFocus();
+  expect(screen.getByRole('img', { name: /label preview: old-tom\.png/i })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /retry OCR/i })).toBeInTheDocument();
+  expect(screen.queryByRole('status', { name: /label extraction progress/i })).not.toBeInTheDocument();
+});
+
+it('does not present OCR candidates supplied with a deadline result', async () => {
+  const user = userEvent.setup();
+  vi.mocked(extractFromImage).mockResolvedValueOnce({
+    extraction: { brandName: ocrCandidate('WRONG OCR') },
+    rawText: 'WRONG OCR',
+    source: 'ocr',
+    error: 'deadline-exceeded',
+  });
+
+  await startManualReview(user);
+
+  expect(await screen.findByText(/OCR stopped after five seconds/i)).toBeInTheDocument();
+  expect(screen.queryByText('WRONG OCR')).not.toBeInTheDocument();
+});
+
+it('keeps human value, deliberate blank, and visual flags when retry OCR fills an untouched field', async () => {
+  const user = userEvent.setup();
+  vi.mocked(extractFromImage)
+    .mockResolvedValueOnce({
       extraction: {},
-      rawText: 'OLD TOM',
+      rawText: '',
       source: 'ocr',
-      durationMs: 4_321,
+      error: 'deadline-exceeded',
+    })
+    .mockResolvedValueOnce({
+      extraction: {
+        brandName: ocrCandidate('OCR BRAND'),
+        proof: ocrCandidate('90 Proof'),
+        abv: ocrCandidate('45%'),
+      },
+      rawText: 'OCR BRAND 90 Proof 45%',
+      source: 'ocr',
     });
-    await Promise.resolve();
-  });
 
-  expect(screen.queryByText(/local OCR finished/i)).not.toBeInTheDocument();
-  expect(screen.getByRole('img', { name: /label preview: old-tom\.png/i })).toHaveAttribute(
-    'src',
-    'blob:old-tom',
+  await startManualReview(user);
+  await user.click(await screen.findByRole('button', { name: /add brand name candidate/i }));
+  await user.type(
+    screen.getByRole('textbox', { name: /brand name agent-entered candidate/i }),
+    'HUMAN BRAND',
   );
-});
+  await user.click(screen.getByRole('button', { name: /save brand name candidate/i }));
+  await user.click(screen.getByRole('button', { name: /add proof candidate/i }));
+  await user.type(
+    screen.getByRole('textbox', { name: /proof agent-entered candidate/i }),
+    '90 Proof',
+  );
+  await user.click(screen.getByRole('button', { name: /save proof candidate/i }));
+  await user.click(screen.getByRole('button', { name: /remove proof evidence/i }));
+  expect(screen.getByRole('button', { name: /add proof candidate/i })).toHaveFocus();
+  await user.click(
+    screen.getByRole('checkbox', { name: /warning heading is uppercase and bold/i }),
+  );
+  await user.click(screen.getByRole('button', { name: /retry OCR/i }));
 
-it('moves focus to the manual-evidence disclosure after recovery', async () => {
-  const user = userEvent.setup();
-  const result = deferred<ExtractionJobResult>();
-  vi.mocked(extractFromImage).mockReturnValueOnce(result.promise);
-
-  await startPendingManualReview(user);
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(5_000);
-  });
-
-  fireEvent.click(screen.getByRole('button', { name: /review manually now/i }));
-
-  expect(screen.getByText(/manual evidence mode/i)).toHaveFocus();
-
-  await act(async () => {
-    result.resolve({ extraction: {}, rawText: '', source: 'ocr' });
-    await Promise.resolve();
-  });
-});
-
-it('uses one polite live region for slow-review recovery', async () => {
-  const user = userEvent.setup();
-  const result = deferred<ExtractionJobResult>();
-  vi.mocked(extractFromImage).mockReturnValueOnce(result.promise);
-
-  await startPendingManualReview(user);
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(5_000);
-  });
-
-  expect(screen.getByText(/this is taking longer than expected/i).closest('aside'))
-    .not.toHaveAttribute('role', 'status');
-
-  await act(async () => {
-    result.resolve({ extraction: {}, rawText: '', source: 'ocr' });
-    await Promise.resolve();
-  });
-});
-
-it('allows an explicit OCR stop after fifteen seconds before manual review', async () => {
-  const user = userEvent.setup();
-  const result = deferred<ExtractionJobResult>();
-  let signal: AbortSignal | undefined;
-  vi.mocked(extractFromImage).mockImplementationOnce((_file, _onProgress, options) => {
-    signal = options?.signal;
-    return result.promise;
-  });
-
-  await startPendingManualReview(user);
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(15_000);
-  });
-
-  fireEvent.click(screen.getByRole('button', { name: /stop OCR and review manually/i }));
-
-  expect(signal?.aborted).toBe(true);
-  expect(screen.getByText(/manual evidence mode/i)).toBeInTheDocument();
-
-  await act(async () => {
-    result.resolve({ extraction: {}, rawText: '', source: 'ocr' });
-    await Promise.resolve();
-  });
-});
-
-it('cancels a still-running manual-path extraction when the reviewer leaves it', async () => {
-  const user = userEvent.setup();
-  const result = deferred<ExtractionJobResult>();
-  let signal: AbortSignal | undefined;
-  vi.mocked(extractFromImage).mockImplementationOnce((_file, _onProgress, options) => {
-    signal = options?.signal;
-    return result.promise;
-  });
-
-  await startPendingManualReview(user);
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(5_000);
-  });
-  fireEvent.click(screen.getByRole('button', { name: /review manually now/i }));
-  fireEvent.click(screen.getByRole('button', { name: /review another label/i }));
-
-  expect(signal?.aborted).toBe(true);
-
-  await act(async () => {
-    result.resolve({ extraction: {}, rawText: '', source: 'ocr' });
-    await Promise.resolve();
-  });
+  expect(await screen.findByText('HUMAN BRAND')).toBeInTheDocument();
+  expect(
+    within(screen.getByRole('row', { name: /brand name/i })).getByText('Agent-entered'),
+  ).toBeInTheDocument();
+  expect(screen.queryByText('90 Proof')).not.toBeInTheDocument();
+  expect(
+    within(screen.getByRole('row', { name: /alcohol by volume/i })).getByRole('button', {
+      name: /correct alcohol by volume candidate/i,
+    }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole('checkbox', { name: /warning heading is uppercase and bold/i }),
+  ).toBeChecked();
+  expect(screen.getByText(/OCR stopped after five seconds/i)).not.toHaveFocus();
 });
 
 it('prewarms OCR only after a reviewer enters a single or batch intake', async () => {
@@ -1127,35 +1087,6 @@ it('keeps the benchmark runnable after Strict Mode replays its lifecycle cleanup
   await waitFor(() => {
     expect(fetchSample).toHaveBeenCalledTimes(1);
   });
-});
-
-it('clears a settled manual-path controller before subsequent navigation', async () => {
-  const user = userEvent.setup();
-  const result = deferred<ExtractionJobResult>();
-  let signal: AbortSignal | undefined;
-  vi.mocked(extractFromImage).mockImplementationOnce((_file, _onProgress, options) => {
-    signal = options?.signal;
-    return result.promise;
-  });
-
-  await startPendingManualReview(user);
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(5_000);
-  });
-  fireEvent.click(screen.getByRole('button', { name: /review manually now/i }));
-
-  await act(async () => {
-    result.resolve({ extraction: {}, rawText: '', source: 'ocr' });
-    await Promise.resolve();
-  });
-  expect(signal?.aborted).toBe(false);
-
-  fireEvent.click(screen.getByRole('button', { name: /review another label/i }));
-
-  expect(signal?.aborted).toBe(false);
-  expect(
-    screen.getByRole('heading', { name: /start with the facts submitted for review/i }),
-  ).toBeInTheDocument();
 });
 
 it('preserves fixture evidence when an agent corrects an extracted candidate', async () => {

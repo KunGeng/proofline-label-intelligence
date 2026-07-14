@@ -13,12 +13,20 @@ import { demoCases } from './features/demo/cases';
 import { extractFromImage, prewarmOcr } from './features/extraction/ocr';
 import type { DemoCaseId } from './features/extraction/types';
 import type { QueueItem } from './features/intake/queue';
+import {
+  clearManualCandidate,
+  mergeUntouchedOcrEvidence,
+  setManualCandidate,
+  type ManualEvidenceLocks,
+} from './features/review/manualEvidence';
 
 interface ActiveReview {
   phase: 'processing' | 'error' | 'ready';
   title: string;
   application: ApplicationData;
+  file?: File;
   extraction: LabelExtraction;
+  manualEvidenceLocks: ManualEvidenceLocks;
   rawText: string;
   isGuidedDemo?: boolean;
   isManualEvidence?: boolean;
@@ -28,6 +36,7 @@ interface ActiveReview {
   objectUrl?: string;
   disclosure?: string;
   shouldFocusReviewHeading?: boolean;
+  shouldFocusManualDisclosure?: boolean;
   error?: string;
   progress?: number;
   durationMs?: number;
@@ -86,9 +95,6 @@ const schedulePrewarm = (): void => {
   window.setTimeout(run, 0);
 };
 
-const manualEvidenceDisclosure =
-  'Manual evidence mode — no OCR candidate was used. Inspect the original label and enter only evidence you can verify.';
-
 interface AppProps {
   initialBatchItems?: QueueItem[];
 }
@@ -100,11 +106,8 @@ export function App({ initialBatchItems }: AppProps) {
   const [review, setReview] = useState<ActiveReview>();
   const [warningTypographyConfirmed, setWarningTypographyConfirmed] = useState(false);
   const [warningLegibilityConfirmed, setWarningLegibilityConfirmed] = useState(false);
-  const [slowExtraction, setSlowExtraction] = useState(false);
-  const [stopAvailable, setStopAvailable] = useState(false);
   const extractionRun = useRef(0);
   const extractionAbort = useRef<AbortController | undefined>(undefined);
-  const slowTimerCleanup = useRef<(() => void) | undefined>(undefined);
 
   useEffect(() => {
     const objectUrl = review?.objectUrl;
@@ -120,28 +123,9 @@ export function App({ initialBatchItems }: AppProps) {
     () => () => {
       extractionRun.current += 1;
       extractionAbort.current?.abort();
-      slowTimerCleanup.current?.();
-      slowTimerCleanup.current = undefined;
     },
     [],
   );
-
-  const clearSlowRecovery = (): void => {
-    slowTimerCleanup.current?.();
-    slowTimerCleanup.current = undefined;
-    setSlowExtraction(false);
-    setStopAvailable(false);
-  };
-
-  const startSlowTimers = (): (() => void) => {
-    const slow = window.setTimeout(() => setSlowExtraction(true), 5_000);
-    const stop = window.setTimeout(() => setStopAvailable(true), 15_000);
-
-    return () => {
-      window.clearTimeout(slow);
-      window.clearTimeout(stop);
-    };
-  };
 
   const resetVisualConfirmations = (): void => {
     setWarningTypographyConfirmed(false);
@@ -152,7 +136,6 @@ export function App({ initialBatchItems }: AppProps) {
     extractionRun.current += 1;
     extractionAbort.current?.abort();
     extractionAbort.current = undefined;
-    clearSlowRecovery();
   };
 
   const resetTo = (nextView: Exclude<AppView, 'review'>): void => {
@@ -179,6 +162,7 @@ export function App({ initialBatchItems }: AppProps) {
       title: demoCase.title,
       application: demoCase.application,
       extraction: asFixtureEvidence(demoCase.extraction),
+      manualEvidenceLocks: {},
       rawText: demoCase.rawText,
       isGuidedDemo: true,
       imageUrl: demoCase.visual.kind === 'image' ? demoCase.visual.src : undefined,
@@ -194,28 +178,51 @@ export function App({ initialBatchItems }: AppProps) {
     setView('review');
   };
 
-  const startReview = async (application: ApplicationData, file: File): Promise<void> => {
+  const runExtraction = async (
+    application: ApplicationData,
+    file: File,
+    preserveDraft: boolean,
+  ): Promise<void> => {
     const run = extractionRun.current + 1;
     extractionRun.current = run;
     extractionAbort.current?.abort();
-    clearSlowRecovery();
     const abortController = new AbortController();
     extractionAbort.current = abortController;
-    const objectUrl = previewUrlFor(file);
 
-    resetVisualConfirmations();
-    setReview({
-      phase: 'processing',
-      title: file.name,
-      application,
-      extraction: {},
-      rawText: '',
-      imageUrl: objectUrl,
-      objectUrl,
-      progress: 0,
-    });
-    setView('review');
-    slowTimerCleanup.current = startSlowTimers();
+    if (preserveDraft) {
+      if (extractionRun.current !== run) {
+        return;
+      }
+      setReview((current) =>
+        !current || extractionRun.current !== run
+          ? current
+          : {
+              ...current,
+              phase: 'processing',
+              error: undefined,
+              progress: 0,
+              durationMs: undefined,
+              shouldFocusManualDisclosure: false,
+            },
+      );
+    } else {
+      const objectUrl = previewUrlFor(file);
+
+      resetVisualConfirmations();
+      setReview({
+        phase: 'processing',
+        title: file.name,
+        application,
+        file,
+        extraction: {},
+        manualEvidenceLocks: {},
+        rawText: '',
+        imageUrl: objectUrl,
+        objectUrl,
+        progress: 0,
+      });
+      setView('review');
+    }
 
     try {
       const output = await extractFromImage(file, ({ value }) => {
@@ -224,7 +231,9 @@ export function App({ initialBatchItems }: AppProps) {
         }
 
         setReview((current) =>
-          current ? { ...current, progress: value } : current,
+          !current || extractionRun.current !== run
+            ? current
+            : { ...current, progress: value },
         );
       }, { signal: abortController.signal });
 
@@ -232,67 +241,78 @@ export function App({ initialBatchItems }: AppProps) {
         return;
       }
 
-      setReview((current) =>
-        current
-          ? {
-              ...current,
-              extraction: output.extraction,
-              rawText: output.rawText,
-              progress: undefined,
-              phase: output.error ? 'error' : 'ready',
-              error: output.error ? friendlyExtractionError(output.error) : undefined,
-              durationMs: output.error ? undefined : output.durationMs,
-            }
-          : current,
-      );
+      setReview((current) => {
+        if (!current || extractionRun.current !== run) {
+          return current;
+        }
+
+        if (output.error === 'deadline-exceeded') {
+          return {
+            ...current,
+            phase: 'ready',
+            isManualEvidence: true,
+            extraction: preserveDraft ? current.extraction : {},
+            rawText: preserveDraft ? current.rawText : '',
+            disclosure:
+              'OCR stopped after five seconds. The original label is ready for manual evidence review.',
+            shouldFocusManualDisclosure: true,
+            progress: undefined,
+            durationMs: undefined,
+            error: undefined,
+          };
+        }
+
+        const extraction = preserveDraft
+          ? mergeUntouchedOcrEvidence(
+              current.extraction,
+              output.extraction,
+              current.manualEvidenceLocks,
+            )
+          : output.extraction;
+
+        return {
+          ...current,
+          phase: output.error ? 'error' : 'ready',
+          extraction,
+          rawText: output.rawText || current.rawText,
+          progress: undefined,
+          durationMs: output.error ? undefined : output.durationMs,
+          error: output.error ? friendlyExtractionError(output.error) : undefined,
+          shouldFocusManualDisclosure: false,
+        };
+      });
     } catch {
       if (extractionRun.current !== run) {
         return;
       }
 
       setReview((current) =>
-        current
-          ? {
+        !current || extractionRun.current !== run
+          ? current
+          : {
               ...current,
               phase: 'error',
               progress: undefined,
               error: 'OCR could not complete. Try a clearer image or begin a new evidence review.',
+              shouldFocusManualDisclosure: false,
             }
-          : current,
       );
     } finally {
       if (extractionAbort.current === abortController) {
         extractionAbort.current = undefined;
       }
-      if (extractionRun.current === run) {
-        clearSlowRecovery();
-      }
     }
   };
 
-  const reviewManually = (): void => {
-    extractionRun.current += 1;
-    clearSlowRecovery();
-    setReview((current) =>
-      current
-        ? {
-            ...current,
-            phase: 'ready',
-            isManualEvidence: true,
-            extraction: {},
-            rawText: '',
-            disclosure: manualEvidenceDisclosure,
-            error: undefined,
-            progress: undefined,
-            durationMs: undefined,
-          }
-        : current,
-    );
-  };
+  const startReview = (application: ApplicationData, file: File): Promise<void> =>
+    runExtraction(application, file, false);
 
-  const stopAndReviewManually = (): void => {
-    extractionAbort.current?.abort();
-    reviewManually();
+  const retryOcr = (): void => {
+    if (!review?.file) {
+      return;
+    }
+
+    void runExtraction(review.application, review.file, true);
   };
 
   const correctCandidate = (field: CandidateField, value: string): void => {
@@ -301,20 +321,24 @@ export function App({ initialBatchItems }: AppProps) {
         return current;
       }
 
-      const candidate = current.extraction[field];
-
       return {
         ...current,
-        extraction: {
-          ...current.extraction,
-          [field]: candidate
-            ? // A correction is a human-verified value: the OCR confidence no
-              // longer describes it, while the original evidence text stays visible.
-              { ...candidate, value, source: 'agent', confidence: 1 }
-            : { value, rawText: '', confidence: 1, source: 'agent' },
-        },
+        extraction: setManualCandidate(current.extraction, field, value),
+        manualEvidenceLocks: { ...current.manualEvidenceLocks, [field]: true },
       };
     });
+  };
+
+  const clearCandidate = (field: CandidateField): void => {
+    setReview((current) =>
+      !current
+        ? current
+        : {
+            ...current,
+            extraction: clearManualCandidate(current.extraction, field),
+            manualEvidenceLocks: { ...current.manualEvidenceLocks, [field]: true },
+          },
+    );
   };
 
   const content = (() => {
@@ -371,16 +395,15 @@ export function App({ initialBatchItems }: AppProps) {
           durationMs={review.durationMs}
           isGuidedDemo={Boolean(review.isGuidedDemo)}
           shouldFocusReviewHeading={review.shouldFocusReviewHeading}
-          shouldFocusManualDisclosure={Boolean(review.isManualEvidence)}
-          slowExtraction={slowExtraction}
-          stopAvailable={stopAvailable}
-          onManualReview={reviewManually}
-          onStopOcr={stopAndReviewManually}
+          shouldFocusManualDisclosure={Boolean(review.shouldFocusManualDisclosure)}
+          manualEvidence={review.isManualEvidence}
+          onRetryOcr={retryOcr}
           warningTypographyConfirmed={warningTypographyConfirmed}
           onWarningTypographyConfirmed={setWarningTypographyConfirmed}
           warningLegibilityConfirmed={warningLegibilityConfirmed}
           onWarningLegibilityConfirmed={setWarningLegibilityConfirmed}
           onCorrectCandidate={correctCandidate}
+          onClearCandidate={clearCandidate}
           exitLabel="Review another label"
           onExit={() => resetTo('intake')}
         />

@@ -7,6 +7,7 @@ import type {
   ReviewState,
   VerificationResult,
 } from '../domain/types';
+import { evidenceFields } from '../features/review/manualEvidence';
 import {
   ScopeNotice,
   SectionCard,
@@ -39,15 +40,20 @@ interface ReviewDeskProps {
   isGuidedDemo: boolean;
   shouldFocusReviewHeading?: boolean;
   shouldFocusManualDisclosure: boolean;
-  slowExtraction: boolean;
-  stopAvailable: boolean;
-  onManualReview: () => void;
-  onStopOcr: () => void;
+  manualEvidence?: boolean;
+  onRetryOcr?: () => void;
+  // BatchQueue still passes these legacy props until Task 4 owns its manual-review path.
+  // They are accepted for compatibility only; no timer-driven recovery UI is rendered.
+  slowExtraction?: boolean;
+  stopAvailable?: boolean;
+  onManualReview?: () => void;
+  onStopOcr?: () => void;
   warningTypographyConfirmed: boolean;
   onWarningTypographyConfirmed: (confirmed: boolean) => void;
   warningLegibilityConfirmed: boolean;
   onWarningLegibilityConfirmed: (confirmed: boolean) => void;
   onCorrectCandidate: (field: CandidateField, value: string) => void;
+  onClearCandidate?: (field: CandidateField) => void;
   exitLabel?: string;
   onExit: () => void;
 }
@@ -122,15 +128,14 @@ export function ReviewDesk({
   isGuidedDemo,
   shouldFocusReviewHeading,
   shouldFocusManualDisclosure,
-  slowExtraction,
-  stopAvailable,
-  onManualReview,
-  onStopOcr,
+  manualEvidence,
+  onRetryOcr,
   warningTypographyConfirmed,
   onWarningTypographyConfirmed,
   warningLegibilityConfirmed,
   onWarningLegibilityConfirmed,
   onCorrectCandidate,
+  onClearCandidate,
   exitLabel,
   onExit,
 }: ReviewDeskProps) {
@@ -193,6 +198,15 @@ export function ReviewDesk({
     setEditingField(undefined);
     setCorrection('');
     setCorrectionError(undefined);
+  };
+
+  const removeCandidate = (field: CandidateField): void => {
+    if (!onClearCandidate) {
+      return;
+    }
+
+    onClearCandidate(field);
+    closeCorrection(field);
   };
 
   const saveCorrection = (field: CandidateField, isNewCandidate: boolean): void => {
@@ -267,9 +281,117 @@ export function ReviewDesk({
     );
   };
 
+  const renderCandidateEditor = (
+    field: CandidateField,
+    candidate: Candidate | undefined,
+  ) => {
+    const isEditing = editingField === field;
+    const label = fieldLabel(field);
+
+    return (
+      <>
+        <button
+          ref={(element) => {
+            correctionTriggerRefs.current[field] = element;
+          }}
+          className="text-button"
+          type="button"
+          aria-expanded={isEditing}
+          aria-controls={isEditing ? correctionIdFor(field) : undefined}
+          onClick={() => {
+            if (isEditing) {
+              closeCorrection(field);
+              return;
+            }
+
+            openCandidateEntry(field, candidate);
+          }}
+        >
+          {isEditing
+            ? `Close ${label} ${candidate ? 'correction' : 'candidate entry'}`
+            : candidate
+              ? `Correct ${label} candidate`
+              : `Add ${label} candidate`}
+        </button>
+        {candidate && onClearCandidate ? (
+          <button className="text-button" type="button" onClick={() => removeCandidate(field)}>
+            Remove {label} evidence
+          </button>
+        ) : null}
+        {isEditing ? correctionForm(field, candidate) : null}
+      </>
+    );
+  };
+
   const progressPercent = typeof progress === 'number'
     ? Math.round(Math.max(0, Math.min(1, progress)) * 100)
     : undefined;
+
+  const evidenceColumn = (
+    <aside className="evidence-column" aria-label="Label evidence">
+      <SectionCard title="Label evidence" eyebrow="What the label shows">
+        {evidencePreview ?? (
+          imageUrl ? (
+            <figure className="label-preview">
+              <img
+                className={imageClassName}
+                src={imageUrl}
+                alt={`Label preview: ${title}`}
+              />
+              <figcaption>Evidence stays attached to this review for the current browser session.</figcaption>
+            </figure>
+          ) : (
+            <p className="muted">No preview is available for this label.</p>
+          )
+        )}
+        <details className="raw-text" id="raw-evidence">
+          <summary>View complete extracted text</summary>
+          <pre>{rawText || 'No readable text was extracted from this label.'}</pre>
+        </details>
+      </SectionCard>
+
+      <SectionCard title="Required visual confirmation" eyebrow="Agent check">
+        <div id="typography-confirmation">
+          <p className="section-copy">
+            OCR can read the wording, but it cannot verify the warning heading’s presentation.
+          </p>
+          <label className="checkbox-field checkbox-field--confirmation">
+            <input
+              type="checkbox"
+              checked={warningTypographyConfirmed}
+              onChange={(event) => onWarningTypographyConfirmed(event.target.checked)}
+            />
+            <span>I visually confirmed the warning heading is uppercase and bold.</span>
+          </label>
+          {warningTypography ? (
+            <div className="confirmation-status">
+              <StatusBadge state={warningTypography.state} />
+              <p>{warningTypography.reason}</p>
+            </div>
+          ) : null}
+        </div>
+        <div className="warning-legibility-confirmation" id="legibility-confirmation">
+          <label className="checkbox-field checkbox-field--confirmation">
+            <input
+              type="checkbox"
+              checked={warningLegibilityConfirmed}
+              onChange={(event) => onWarningLegibilityConfirmed(event.target.checked)}
+            />
+            <span>
+              I reviewed warning legibility, contrast, and placement. Exact printed type size still
+              needs final regulatory review.
+            </span>
+          </label>
+          {warningLegibility ? (
+            <div className="confirmation-status">
+              <StatusBadge state={warningLegibility.state} />
+              <p>{warningLegibility.reason}</p>
+            </div>
+          ) : null}
+        </div>
+      </SectionCard>
+    </aside>
+  );
 
   return (
     <section className="review-desk" aria-labelledby="review-heading">
@@ -291,6 +413,14 @@ export function ReviewDesk({
             >
               {disclosure}
             </p>
+          ) : null}
+          {manualEvidence ? (
+            <div className="manual-evidence-actions">
+              <p>Human-entered evidence is preserved. Retry OCR can fill only untouched empty fields.</p>
+              <button type="button" className="button button--secondary" onClick={onRetryOcr}>
+                Retry OCR
+              </button>
+            </div>
           ) : null}
         </div>
         <button type="button" className="button button--secondary" onClick={onExit}>
@@ -314,22 +444,6 @@ export function ReviewDesk({
             Proofline is reading this label locally. Findings and visual-confirmation
             controls will appear only after extraction finishes.
           </p>
-          {slowExtraction ? (
-            <aside className="slow-ocr-notice">
-              <strong>This is taking longer than expected.</strong>
-              <p>You can keep waiting or inspect the image and enter evidence manually.</p>
-              <div className="slow-ocr-notice__actions">
-                <button type="button" className="button button--secondary" onClick={onManualReview}>
-                  Review manually now
-                </button>
-                {stopAvailable ? (
-                  <button type="button" className="button button--secondary" onClick={onStopOcr}>
-                    Stop OCR and review manually
-                  </button>
-                ) : null}
-              </div>
-            </aside>
-          ) : null}
           {progressPercent !== undefined ? (
             <div
               className="processing-note"
@@ -430,69 +544,7 @@ export function ReviewDesk({
       </section>
 
       <div className="review-desk__grid">
-        <aside className="evidence-column" aria-label="Label evidence">
-          <SectionCard title="Label evidence" eyebrow="What the label shows">
-            {evidencePreview ?? (
-              imageUrl ? (
-                <figure className="label-preview">
-                  <img
-                    className={imageClassName}
-                    src={imageUrl}
-                    alt={`Label preview: ${title}`}
-                  />
-                  <figcaption>Evidence stays attached to this review for the current browser session.</figcaption>
-                </figure>
-              ) : (
-                <p className="muted">No preview is available for this label.</p>
-              )
-            )}
-            <details className="raw-text" id="raw-evidence">
-              <summary>View complete extracted text</summary>
-              <pre>{rawText || 'No readable text was extracted from this label.'}</pre>
-            </details>
-          </SectionCard>
-
-          <SectionCard title="Required visual confirmation" eyebrow="Agent check">
-            <div id="typography-confirmation">
-              <p className="section-copy">
-                OCR can read the wording, but it cannot verify the warning heading’s presentation.
-              </p>
-              <label className="checkbox-field checkbox-field--confirmation">
-                <input
-                  type="checkbox"
-                  checked={warningTypographyConfirmed}
-                  onChange={(event) => onWarningTypographyConfirmed(event.target.checked)}
-                />
-                <span>I visually confirmed the warning heading is uppercase and bold.</span>
-              </label>
-              {warningTypography ? (
-                <div className="confirmation-status">
-                  <StatusBadge state={warningTypography.state} />
-                  <p>{warningTypography.reason}</p>
-                </div>
-              ) : null}
-            </div>
-            <div className="warning-legibility-confirmation" id="legibility-confirmation">
-              <label className="checkbox-field checkbox-field--confirmation">
-                <input
-                  type="checkbox"
-                  checked={warningLegibilityConfirmed}
-                  onChange={(event) => onWarningLegibilityConfirmed(event.target.checked)}
-                />
-                <span>
-                  I reviewed warning legibility, contrast, and placement. Exact printed type size still
-                  needs final regulatory review.
-                </span>
-              </label>
-              {warningLegibility ? (
-                <div className="confirmation-status">
-                  <StatusBadge state={warningLegibility.state} />
-                  <p>{warningLegibility.reason}</p>
-                </div>
-              ) : null}
-            </div>
-          </SectionCard>
-        </aside>
+        {evidenceColumn}
 
         <div id="field-comparison">
           <SectionCard
@@ -527,7 +579,6 @@ export function ReviewDesk({
                     const candidateField = isCandidateField(fieldResult.field)
                       ? fieldResult.field
                       : undefined;
-                    const isEditing = candidateField !== undefined && editingField === candidateField;
                     const label = fieldLabel(fieldResult.field);
 
                     return (
@@ -546,60 +597,14 @@ export function ReviewDesk({
                                 {rawEvidenceLabel(candidate, isGuidedDemo)}:{' '}
                                 {candidate.rawText || emptyRawEvidenceText(candidate, isGuidedDemo)}
                               </p>
-                              {candidateField ? (
-                                <>
-                                  <button
-                                    ref={(element) => {
-                                      correctionTriggerRefs.current[candidateField] = element;
-                                    }}
-                                    className="text-button"
-                                    type="button"
-                                    aria-expanded={isEditing}
-                                    aria-controls={
-                                      isEditing ? correctionIdFor(candidateField) : undefined
-                                    }
-                                    onClick={() => {
-                                      if (isEditing) {
-                                        closeCorrection(candidateField);
-                                        return;
-                                      }
-
-                                      openCandidateEntry(candidateField, candidate);
-                                    }}
-                                  >
-                                    {isEditing
-                                      ? `Close ${label} correction`
-                                      : `Correct ${label} candidate`}
-                                  </button>
-                                  {isEditing ? correctionForm(candidateField, candidate) : null}
-                                </>
-                              ) : null}
+                              {candidateField
+                                ? renderCandidateEditor(candidateField, candidate)
+                                : null}
                             </div>
                           ) : candidateField ? (
                             <div className="candidate-evidence">
                               <span className="muted">No extracted candidate</span>
-                              <button
-                                ref={(element) => {
-                                  correctionTriggerRefs.current[candidateField] = element;
-                                }}
-                                className="text-button"
-                                type="button"
-                                aria-expanded={isEditing}
-                                aria-controls={
-                                  isEditing ? correctionIdFor(candidateField) : undefined
-                                }
-                                onClick={() => {
-                                  if (isEditing) {
-                                    closeCorrection(candidateField);
-                                    return;
-                                  }
-
-                                  openCandidateEntry(candidateField);
-                                }}
-                              >
-                                {isEditing ? `Close ${label} candidate entry` : `Add ${label} candidate`}
-                              </button>
-                              {isEditing ? correctionForm(candidateField, undefined) : null}
+                              {renderCandidateEditor(candidateField, undefined)}
                             </div>
                           ) : fieldResult.field === 'abvProofConsistency' ? (
                             <span className="muted">Derived from extracted ABV and proof candidates.</span>
@@ -622,6 +627,64 @@ export function ReviewDesk({
       </div>
         </>
       )}
+
+      {phase === 'ready' && manualEvidence && !result ? (
+        <div className="review-desk__grid">
+          {evidenceColumn}
+          <div id="field-comparison">
+            <SectionCard title="Manual evidence entry" eyebrow="Reviewer-recorded label facts">
+              <p className="section-copy">
+                No application record is attached to this label. Enter only facts you can verify on the image.
+              </p>
+              <div
+                className="comparison-table-wrap"
+                role="region"
+                aria-label="Manual evidence entry table. Scroll horizontally to review all columns."
+                tabIndex={0}
+              >
+                <table>
+                  <thead>
+                    <tr>
+                      <th scope="col">Field</th>
+                      <th scope="col">Evidence</th>
+                      <th scope="col">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {evidenceFields.map((field) => {
+                      const candidate = extraction[field];
+
+                      return (
+                        <tr key={field}>
+                          <th scope="row">{fieldLabel(field)}</th>
+                          <td>
+                            {candidate ? (
+                              <div className="candidate-evidence">
+                                <span className="table-value">{candidate.value}</span>
+                                <div className="candidate-evidence__meta">
+                                  <SourceChip source={candidate.source} />
+                                  <span>{confidenceText(candidate)}</span>
+                                </div>
+                                <p className="raw-evidence">
+                                  {rawEvidenceLabel(candidate, isGuidedDemo)}:{' '}
+                                  {candidate.rawText || emptyRawEvidenceText(candidate, isGuidedDemo)}
+                                </p>
+                              </div>
+                            ) : (
+                              'No evidence entered'
+                            )}
+                          </td>
+                          <td>{renderCandidateEditor(field, candidate)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </SectionCard>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }
