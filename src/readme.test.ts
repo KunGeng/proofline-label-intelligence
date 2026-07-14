@@ -59,7 +59,7 @@ describe('submission documentation', () => {
     expect(packageJson.scripts?.preview).toContain('vite preview');
   });
 
-  it('defines reproducible AWS Amplify static-host settings', async () => {
+  it('pins the exact frontend-only AWS Amplify static-host configuration', async () => {
     const [amplify, packageText] = await Promise.all([
       readFile('amplify.yml', 'utf8'),
       readFile('package.json', 'utf8'),
@@ -71,21 +71,52 @@ describe('submission documentation', () => {
 
     expect(packageJson.packageManager).toBe('pnpm@11.12.0');
     expect(packageJson.scripts?.build).toContain('scripts/prepare-sites-worker.mjs');
-    expect(amplify).toMatch(/nvm use 22/);
-    expect(amplify).toMatch(/corepack enable/);
-    expect(amplify).toMatch(/pnpm install --frozen-lockfile/);
-    expect(amplify).toMatch(/pnpm build/);
-    expect(amplify).toMatch(/baseDirectory:\s*dist\/client/);
-    expect(amplify).toMatch(/files:\s*\n\s*- '\*\*\/\*'/);
+    expect(amplify).toBe(
+      [
+        'version: 1',
+        'frontend:',
+        '  phases:',
+        '    preBuild:',
+        '      commands:',
+        '        - nvm use 22',
+        '        - corepack enable',
+        '        - pnpm install --frozen-lockfile',
+        '    build:',
+        '      commands:',
+        '        - pnpm build',
+        '  artifacts:',
+        '    baseDirectory: dist/client',
+        '    files:',
+        "      - '**/*'",
+        '  cache:',
+        '    paths:',
+        '      - node_modules/**/*',
+        '',
+      ].join('\n'),
+    );
   });
 
-  it('documents a verified Amplify release and preserves the rollback deployment', async () => {
+  it('documents the exact verified Amplify release, link roles, and static-host contract', async () => {
     const readme = await readFile('README.md', 'utf8');
+    const primaryUrl = 'https://main.d4qb8x5x7ay8t.amplifyapp.com/';
+    const rollbackUrl = 'https://proofline-label-intelligence.kungeng0803.chatgpt.site';
+    const releaseMasthead = [
+      `**Primary public deployment:** [main.d4qb8x5x7ay8t.amplifyapp.com](${primaryUrl})`,
+      '',
+      `**Rollback deployment:** [proofline-label-intelligence.kungeng0803.chatgpt.site](${rollbackUrl})`,
+    ].join('\n');
 
-    expect(readme).toMatch(/https:\/\/main\.[a-z0-9-]+\.amplifyapp\.com/);
-    expect(readme).toContain('AWS Amplify Hosting');
-    expect(readme).toContain('Rollback deployment');
-    expect(readme).toContain('https://proofline-label-intelligence.kungeng0803.chatgpt.site');
+    expect(readme).toContain(releaseMasthead);
+    expect(readme.indexOf(releaseMasthead)).toBeLessThan(readme.indexOf('## What it does'));
+    expect(readme).toContain(
+      `## Try it in 60 seconds\n\nOn a local build or the [primary public deployment](${primaryUrl}):`,
+    );
+    expect(readme).toContain(
+      `**Release status:** The app is deployed through **AWS Amplify Hosting** at [main.d4qb8x5x7ay8t.amplifyapp.com](${primaryUrl}). It remains a static, browser-local application; the host serves assets but does not receive label images or application facts from the app. The existing [Sites deployment](${rollbackUrl}) remains available as the **Rollback deployment** during the migration.`,
+    );
+    expect(readme).toContain(
+      '**AWS Amplify Hosting:** Build from [`amplify.yml`](amplify.yml) and publish `dist/client`. Retain same-origin `ocr/` assets in the published bundle, and do not configure a blanket rewrite while views remain in-memory.',
+    );
     expect(readme).not.toContain('The current source revision awaits final verification and deployment.');
   });
 
