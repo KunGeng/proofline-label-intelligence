@@ -57,6 +57,7 @@ const waitForMockCall = async (mock: ReturnType<typeof vi.fn>): Promise<void> =>
 };
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -331,6 +332,144 @@ describe('OCR engine facade', () => {
       source: 'ocr',
     }));
     expect(workerFactoryMock).not.toHaveBeenCalled();
+  });
+
+  it('returns deadline-exceeded while image preparation is pending', async () => {
+    vi.useFakeTimers();
+    const prepareImage = vi.fn().mockReturnValue(new Promise(() => undefined));
+    const engine = createOcrEngine({ prepareImage });
+
+    const result = engine.extract(file(), vi.fn());
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    await expect(result).resolves.toMatchObject({
+      error: 'deadline-exceeded',
+      source: 'ocr',
+    });
+  });
+
+  it('returns deadline-exceeded while waiting for a worker slot and leaves capacity usable', async () => {
+    vi.useFakeTimers();
+    const releaseRecognition = deferred<void>();
+    const heldWorker = (text: string) => ({
+      recognize: vi.fn().mockImplementation(async () => {
+        await releaseRecognition.promise;
+        return { data: { text, words: [], lines: [] } };
+      }),
+      terminate: vi.fn().mockResolvedValue(undefined),
+    }) as unknown as OcrWorker;
+    const workerFactoryMock = vi
+      .fn()
+      .mockResolvedValueOnce(heldWorker('ONE'))
+      .mockResolvedValueOnce(heldWorker('TWO'));
+    const engine = createOcrEngine({
+      createWorker: workerFactoryMock as unknown as WorkerFactory,
+      prepareImage: preparedImage,
+    });
+
+    const first = engine.extract(file(), vi.fn(), { deadlineMs: null });
+    const second = engine.extract(file(), vi.fn(), { deadlineMs: null });
+    await Promise.resolve();
+    const waiting = engine.extract(file(), vi.fn());
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    await expect(waiting).resolves.toMatchObject({ error: 'deadline-exceeded' });
+    expect(workerFactoryMock).toHaveBeenCalledTimes(2);
+    releaseRecognition.resolve();
+    await Promise.all([first, second]);
+  });
+
+  it('terminates a late-initializing worker after the deadline', async () => {
+    vi.useFakeTimers();
+    const pendingWorker = deferred<OcrWorker>();
+    const lateTerminate = vi.fn().mockResolvedValue(undefined);
+    const replacementRecognize = vi.fn().mockResolvedValue({
+      data: { text: 'OLD TOM', words: [], lines: [] },
+    });
+    const workerFactoryMock = vi
+      .fn()
+      .mockReturnValueOnce(pendingWorker.promise)
+      .mockResolvedValueOnce({ recognize: replacementRecognize, terminate: vi.fn() });
+    const engine = createOcrEngine({
+      createWorker: workerFactoryMock as unknown as WorkerFactory,
+      prepareImage: preparedImage,
+    });
+
+    const expired = engine.extract(file(), vi.fn());
+    await waitForWorkerFactory(workerFactoryMock);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await expect(expired).resolves.toMatchObject({ error: 'deadline-exceeded' });
+
+    pendingWorker.resolve({ terminate: lateTerminate } as unknown as OcrWorker);
+    await waitForMockCall(lateTerminate);
+    await engine.extract(file(), vi.fn(), { deadlineMs: null });
+    expect(replacementRecognize).toHaveBeenCalledTimes(1);
+  });
+
+  it('retires a worker whose recognition passes the deadline', async () => {
+    vi.useFakeTimers();
+    const pendingRecognition = deferred<{
+      data: { text: string; words: []; lines: [] };
+    }>();
+    const expiredTerminate = vi.fn().mockResolvedValue(undefined);
+    const replacementRecognize = vi.fn().mockResolvedValue({
+      data: { text: 'OLD TOM', words: [], lines: [] },
+    });
+    const engine = createOcrEngine({
+      createWorker: vi
+        .fn()
+        .mockResolvedValueOnce({
+          recognize: vi.fn().mockReturnValue(pendingRecognition.promise),
+          terminate: expiredTerminate,
+        })
+        .mockResolvedValueOnce({ recognize: replacementRecognize, terminate: vi.fn() }) as unknown as WorkerFactory,
+      prepareImage: preparedImage,
+    });
+
+    const expired = engine.extract(file(), vi.fn());
+    await vi.advanceTimersByTimeAsync(5_000);
+    await expect(expired).resolves.toMatchObject({ error: 'deadline-exceeded' });
+    expect(expiredTerminate).toHaveBeenCalledTimes(1);
+    await engine.extract(file(), vi.fn(), { deadlineMs: null });
+    expect(replacementRecognize).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the first terminal cause when caller cancellation and the deadline race', async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const engine = createOcrEngine({
+      prepareImage: vi.fn().mockReturnValue(new Promise(() => undefined)),
+    });
+    const cancelled = engine.extract(file(), vi.fn(), { signal: controller.signal });
+    controller.abort();
+    await expect(cancelled).resolves.toMatchObject({ error: 'cancelled' });
+
+    const controllerAfterDeadline = new AbortController();
+    const deadlineThenAbort = engine.extract(file(), vi.fn(), {
+      signal: controllerAfterDeadline.signal,
+    });
+    await vi.advanceTimersByTimeAsync(5_000);
+    controllerAfterDeadline.abort();
+    await expect(deadlineThenAbort).resolves.toMatchObject({ error: 'deadline-exceeded' });
+  });
+
+  it('clears a completed deadline timer instead of retiring a reusable worker later', async () => {
+    vi.useFakeTimers();
+    const terminate = vi.fn().mockResolvedValue(undefined);
+    const engine = createOcrEngine({
+      createWorker: vi.fn().mockResolvedValue({
+        recognize: vi.fn().mockResolvedValue({
+          data: { text: 'OLD TOM', words: [], lines: [] },
+        }),
+        terminate,
+      }) as unknown as WorkerFactory,
+      prepareImage: preparedImage,
+    });
+
+    await engine.extract(file(), vi.fn());
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(terminate).not.toHaveBeenCalled();
   });
 });
 

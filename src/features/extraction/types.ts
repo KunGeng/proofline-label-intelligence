@@ -24,6 +24,8 @@ export interface ExtractionTimings {
 
 export interface ExtractionOptions {
   signal?: AbortSignal;
+  /** `undefined` uses the product deadline; `null` intentionally runs uncapped. */
+  deadlineMs?: number | null;
 }
 
 export type ProgressListener = (event: ExtractionProgress) => void;

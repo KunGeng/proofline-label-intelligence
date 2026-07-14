@@ -15,6 +15,7 @@ const MAX_CONCURRENT_WORKERS = 2;
 const LOCAL_OCR_PATH = '/ocr/';
 
 export const WORKER_INITIALIZATION_TIMEOUT_MS = 10_000;
+export const OCR_DEADLINE_MS = 5_000;
 export type WorkerFactory = typeof Tesseract.createWorker;
 type OcrWorker = Awaited<ReturnType<WorkerFactory>>;
 
@@ -214,6 +215,14 @@ const cancelledResult = (thumbnailUrl?: string): ExtractionJobResult => ({
   rawText: '',
   thumbnailUrl,
   error: 'cancelled',
+  source: 'ocr',
+});
+
+const deadlineExceededResult = (thumbnailUrl?: string): ExtractionJobResult => ({
+  extraction: {},
+  rawText: '',
+  thumbnailUrl,
+  error: 'deadline-exceeded',
   source: 'ocr',
 });
 
@@ -462,13 +471,27 @@ export const createOcrEngine = (
     let workerSlotRequest: WorkerSlotRequest | undefined;
     let workerSlotAcquired = false;
     let completed = false;
-    let aborted = options?.signal?.aborted ?? false;
     let cancelPreparation: (() => void) | undefined;
     let cancelRecognition: (() => void) | undefined;
+    type TerminalCause = 'cancelled' | 'deadline-exceeded';
+    const deadlineMs = options?.deadlineMs === undefined
+      ? OCR_DEADLINE_MS
+      : options.deadlineMs;
+    const internalAbort = new AbortController();
+    let terminalCause: TerminalCause | undefined;
 
-    const isAborted = (): boolean => aborted || options?.signal?.aborted === true;
-    const abortExtraction = (): void => {
-      aborted = true;
+    const isAborted = (): boolean => terminalCause !== undefined;
+    const terminalResult = (): ExtractionJobResult =>
+      terminalCause === 'deadline-exceeded'
+        ? deadlineExceededResult(thumbnailUrl)
+        : cancelledResult(thumbnailUrl);
+    const finishWith = (cause: TerminalCause): void => {
+      if (terminalCause) {
+        return;
+      }
+
+      terminalCause = cause;
+      internalAbort.abort();
       workerSlotRequest?.cancel();
       if (pooled) {
         retireWorker(pooled);
@@ -476,20 +499,24 @@ export const createOcrEngine = (
       cancelPreparation?.();
       cancelRecognition?.();
     };
+    const onCallerAbort = (): void => finishWith('cancelled');
 
-    options?.signal?.addEventListener('abort', abortExtraction, { once: true });
-    if (isAborted()) {
-      abortExtraction();
+    options?.signal?.addEventListener('abort', onCallerAbort, { once: true });
+    if (options?.signal?.aborted) {
+      onCallerAbort();
     }
+    const deadlineTimer = deadlineMs === null
+      ? undefined
+      : setTimeout(() => finishWith('deadline-exceeded'), deadlineMs);
 
     try {
       if (isAborted()) {
-        return cancelledResult();
+        return terminalResult();
       }
 
       onProgress({ phase: 'preparing', value: 0 });
       if (isAborted()) {
-        return cancelledResult();
+        return terminalResult();
       }
 
       const preparation = raceWithCancellation(imagePreparer(file));
@@ -503,7 +530,7 @@ export const createOcrEngine = (
       preparationMs = now() - startedAt;
 
       if (isAborted()) {
-        return cancelledResult(thumbnailUrl);
+        return terminalResult();
       }
 
       const workerWaitStartedAt = now();
@@ -515,7 +542,7 @@ export const createOcrEngine = (
       workerSlotRequest = undefined;
 
       if (!workerSlotAcquired || isAborted()) {
-        return cancelledResult(thumbnailUrl);
+        return terminalResult();
       }
 
       pooled = takeIdleWorker();
@@ -526,18 +553,18 @@ export const createOcrEngine = (
           createWorker,
           { current: onProgress },
           initializationTimeoutMs,
-          options?.signal,
+          internalAbort.signal,
         );
       }
 
       const workerWaitMs = now() - workerWaitStartedAt;
       if (isAborted()) {
-        return cancelledResult(thumbnailUrl);
+        return terminalResult();
       }
 
       onProgress({ phase: 'reading', value: 0 });
       if (isAborted()) {
-        return cancelledResult(thumbnailUrl);
+        return terminalResult();
       }
 
       const recognitionStartedAt = now();
@@ -590,7 +617,11 @@ export const createOcrEngine = (
         durationMs: totalMs,
       };
     } catch (error) {
-      if (isAborted() || error instanceof OcrCancellationError) {
+      if (terminalCause === 'deadline-exceeded') {
+        return deadlineExceededResult(thumbnailUrl);
+      }
+
+      if (terminalCause === 'cancelled' || error instanceof OcrCancellationError) {
         return cancelledResult(thumbnailUrl);
       }
 
@@ -598,7 +629,10 @@ export const createOcrEngine = (
         ? inputErrorResult(error, thumbnailUrl)
         : unreadableResult(thumbnailUrl);
     } finally {
-      options?.signal?.removeEventListener('abort', abortExtraction);
+      options?.signal?.removeEventListener('abort', onCallerAbort);
+      if (deadlineTimer !== undefined) {
+        clearTimeout(deadlineTimer);
+      }
       cancelPreparation = undefined;
       cancelRecognition = undefined;
       workerSlotRequest?.cancel();
