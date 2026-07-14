@@ -411,7 +411,12 @@ export function ReviewDesk({
           {manualEvidence ? (
             <div className="manual-evidence-actions">
               <p>Human-entered evidence is preserved. Retry OCR can fill only untouched empty fields.</p>
-              <button type="button" className="button button--secondary" onClick={onRetryOcr}>
+              <button
+                type="button"
+                className="button button--secondary"
+                onClick={onRetryOcr}
+                disabled={phase !== 'ready'}
+              >
                 Retry OCR
               </button>
             </div>

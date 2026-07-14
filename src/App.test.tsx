@@ -1173,6 +1173,52 @@ it('opens preserved manual evidence review for a deadline result and focuses its
   expect(screen.queryByRole('status', { name: /label extraction progress/i })).not.toBeInTheDocument();
 });
 
+it('prevents a duplicate manual OCR retry while the first retry is processing', async () => {
+  const user = userEvent.setup();
+  const retryResult = deferred<ExtractionJobResult>();
+  const duplicateRetryResult = deferred<ExtractionJobResult>();
+  vi.mocked(extractFromImage)
+    .mockResolvedValueOnce({
+      extraction: {},
+      rawText: '',
+      source: 'ocr',
+      error: 'deadline-exceeded',
+    })
+    .mockReturnValueOnce(retryResult.promise)
+    .mockReturnValueOnce(duplicateRetryResult.promise);
+
+  await startManualReview(user);
+
+  const retryButton = await screen.findByRole('button', { name: /^retry OCR$/i });
+  act(() => {
+    fireEvent.click(retryButton);
+    fireEvent.click(retryButton);
+  });
+
+  await waitFor(() => {
+    expect(extractFromImage).toHaveBeenCalledTimes(2);
+  });
+  const retrySignal = vi.mocked(extractFromImage).mock.calls[1]?.[2]?.signal;
+  expect(retrySignal).toBeDefined();
+  expect(retrySignal?.aborted).toBe(false);
+  expect(screen.getByRole('button', { name: /^retry OCR$/i })).toBeDisabled();
+
+  fireEvent.click(screen.getByRole('button', { name: /^retry OCR$/i }));
+  expect(extractFromImage).toHaveBeenCalledTimes(2);
+  expect(retrySignal?.aborted).toBe(false);
+
+  retryResult.resolve({
+    extraction: {},
+    rawText: '',
+    source: 'ocr',
+    error: 'deadline-exceeded',
+  });
+
+  expect(await screen.findByText(/OCR stopped after five seconds/i)).toHaveFocus();
+  expect(screen.getByRole('button', { name: /^retry OCR$/i })).toBeEnabled();
+  expect(extractFromImage).toHaveBeenCalledTimes(2);
+});
+
 it('does not present OCR candidates supplied with a deadline result', async () => {
   const user = userEvent.setup();
   vi.mocked(extractFromImage).mockResolvedValueOnce({

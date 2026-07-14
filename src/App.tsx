@@ -308,7 +308,12 @@ export function App({ initialBatchItems }: AppProps) {
     runExtraction(application, file, false);
 
   const retryOcr = (): void => {
-    if (!review?.file) {
+    if (
+      !review?.file ||
+      !review.isManualEvidence ||
+      review.phase !== 'ready' ||
+      extractionAbort.current
+    ) {
       return;
     }
 
