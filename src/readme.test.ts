@@ -142,19 +142,31 @@ describe('submission documentation', () => {
     expect(workflow).toMatch(/node-version:\s*22/);
     expect(workflow).toContain('pnpm install --frozen-lockfile');
 
-    const deadlineContract = [
-      'After five seconds of automated OCR, Proofline opens manual evidence review.',
-      'Batch items that reach the deadline are marked Manual review required while the queue continues.',
-      'The local benchmark explicitly disables the five-second OCR deadline.',
-      'It does so to ensure its first and warm-worker timings remain an honest measurement of the current device.',
-      'normal responsive browser scheduling',
+    const deadlineParagraphs = [
+      [
+        'After five seconds of automated OCR, Proofline opens manual evidence review.',
+        'The deadline starts when active extraction begins and includes image preparation, worker acquisition, initialization, and recognition.',
+        'The original label and submitted facts remain available; reviewers may enter evidence immediately or explicitly retry OCR.',
+      ].join(' '),
+      [
+        'Batch items that reach the deadline are marked Manual review required while the queue continues.',
+        'They retain their original file and any available evidence, including when no application row was supplied.',
+      ].join(' '),
+      [
+        'The local benchmark explicitly disables the five-second OCR deadline.',
+        'It does so to ensure its first and warm-worker timings remain an honest measurement of the current device.',
+        'The deadline is an automated-wait target under normal responsive browser scheduling, not an absolute real-time guarantee while a browser event loop is blocked.',
+      ].join(' '),
     ];
 
     for (const document of [readme, design]) {
       const normalizedDocument = document.replace(/\s+/g, ' ').trim();
-      for (const statement of deadlineContract) {
-        expect(normalizedDocument).toContain(statement);
+      for (const paragraph of deadlineParagraphs) {
+        expect(normalizedDocument).toContain(paragraph);
       }
+      expect(normalizedDocument).not.toMatch(
+        /\b(?:fifteen|15)[-\s]*seconds?\b[^.]*\b(?:stop|recovery|manual)\b/i,
+      );
     }
   });
 });
