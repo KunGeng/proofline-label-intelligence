@@ -7,6 +7,8 @@ const file = (name: string, type = 'image/png') =>
   new File(['label'], name, { type });
 
 const application: ApplicationData = {
+  beverageType: 'distilled_spirits',
+  alcoholContentExpectation: 'declared',
   brandName: 'OLD TOM',
   classType: 'Bourbon Whiskey',
   abv: '45%',
@@ -191,6 +193,7 @@ describe('createReviewQueue', () => {
       extraction,
       rawText: 'OLD TOM',
     });
+    expect(queue.items[0]?.application).toBeUndefined();
     expect(queue.items[0]?.result).toBeUndefined();
   });
 
@@ -226,7 +229,8 @@ describe('createReviewQueue', () => {
     expect(queue.items[0]).toMatchObject({
       application: job.application,
       reviewFlags: {
-        warningTypographyConfirmed: false,
+        warningUppercaseConfirmed: false,
+        warningBoldConfirmed: false,
         warningLegibilityConfirmed: false,
       },
     });
@@ -275,6 +279,47 @@ describe('createReviewQueue', () => {
       progress: 1,
     });
     expect(queue.items[0]?.result).toBeUndefined();
+  });
+
+  it('retains a beer manual-review profile through a deadline and retry', async () => {
+    const beerApplication: ApplicationData = {
+      ...application,
+      beverageType: 'beer',
+      alcoholContentExpectation: 'manual_review',
+      classType: 'India Pale Ale',
+      abv: undefined,
+      proof: undefined,
+    };
+    const observedProfiles: Array<Pick<ApplicationData, 'beverageType' | 'alcoholContentExpectation'>> = [];
+    let attempts = 0;
+    const queue = createReviewQueue(
+      [{ id: 'beer-retry', file: file('beer-retry.png'), application: beerApplication }],
+      async (job) => {
+        observedProfiles.push({
+          beverageType: job.application!.beverageType,
+          alcoholContentExpectation: job.application!.alcoholContentExpectation,
+        });
+        attempts += 1;
+        return attempts === 1
+          ? { extraction: {}, rawText: '', source: 'ocr', error: 'deadline-exceeded' }
+          : successfulResult();
+      },
+      1,
+    );
+
+    await queue.start();
+    expect(queue.items[0]?.application).toMatchObject({
+      beverageType: 'beer',
+      alcoholContentExpectation: 'manual_review',
+    });
+
+    await queue.retry('beer-retry');
+
+    expect(observedProfiles).toEqual([
+      { beverageType: 'beer', alcoholContentExpectation: 'manual_review' },
+      { beverageType: 'beer', alcoholContentExpectation: 'manual_review' },
+    ]);
+    expect(queue.items[0]?.application).toEqual(beerApplication);
   });
 
   it('continues the queue after a deadline item completes', async () => {
@@ -330,7 +375,8 @@ describe('createReviewQueue', () => {
       'proof',
     );
     item.manualEvidenceLocks = { brandName: true, proof: true };
-    item.reviewFlags.warningTypographyConfirmed = true;
+    item.reviewFlags.warningUppercaseConfirmed = true;
+    item.reviewFlags.warningBoldConfirmed = true;
     await queue.retry('retry');
 
     expect(item).toMatchObject({
@@ -339,7 +385,10 @@ describe('createReviewQueue', () => {
         brandName: { value: 'HUMAN BRAND', source: 'agent' },
         abv: { value: '45%', source: 'ocr' },
       },
-      reviewFlags: { warningTypographyConfirmed: true },
+      reviewFlags: {
+        warningUppercaseConfirmed: true,
+        warningBoldConfirmed: true,
+      },
       manualEvidenceLocks: { brandName: true, proof: true },
     });
     expect(item.extraction?.proof).toBeUndefined();

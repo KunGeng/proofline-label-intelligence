@@ -58,6 +58,27 @@ const fillManualReviewForm = async (
   return screen.getByRole('button', { name: /start evidence review/i });
 };
 
+const fillBeerManualReviewForm = async (
+  user: ReturnType<typeof userEvent.setup>,
+): Promise<HTMLElement> => {
+  render(<App />);
+  await user.click(screen.getByRole('button', { name: /review a label/i }));
+  await user.selectOptions(screen.getByLabelText(/beverage type/i), 'beer');
+  await user.selectOptions(
+    screen.getByLabelText(/alcohol content expectation/i),
+    'manual_review',
+  );
+  await user.type(screen.getByRole('textbox', { name: /^brand name$/i }), 'HOP FIELD');
+  await user.type(screen.getByRole('textbox', { name: /class\/type/i }), 'India Pale Ale');
+  await user.type(screen.getByRole('textbox', { name: /net contents/i }), '355 mL');
+  await user.type(screen.getByRole('textbox', { name: /producer address/i }), 'Hop Field, OR');
+  await user.upload(
+    screen.getByLabelText(/^choose label image$/i),
+    new File(['label'], 'hop-field.png', { type: 'image/png' }),
+  );
+  return screen.getByRole('button', { name: /start evidence review/i });
+};
+
 const startManualReview = async (user: ReturnType<typeof userEvent.setup>): Promise<void> => {
   await user.click(await fillManualReviewForm(user));
 };
@@ -196,6 +217,25 @@ it('offers a guided demo and a label-review entry point', () => {
   ).toBeInTheDocument();
 });
 
+it('submits a beer manual-review record without proof or declared ABV', async () => {
+  const user = userEvent.setup();
+  vi.mocked(extractFromImage).mockResolvedValueOnce({
+    extraction: {},
+    rawText: '',
+    source: 'ocr',
+  });
+
+  const submit = await fillBeerManualReviewForm(user);
+  expect(screen.queryByLabelText(/^proof/i)).not.toBeInTheDocument();
+  await user.click(submit);
+
+  expect(extractFromImage).toHaveBeenCalledWith(
+    expect.any(File),
+    expect.any(Function),
+    expect.objectContaining({ signal: expect.any(AbortSignal) }),
+  );
+});
+
 it('opens an explicit foreign-origin scenario with fixture evidence and a review finding', async () => {
   const user = userEvent.setup();
   render(<App />);
@@ -288,7 +328,9 @@ it('offers a starter CSV and exact validation schema in batch intake', async () 
 
   expect(screen.getByRole('link', { name: /download starter csv/i }))
     .toHaveAttribute('href', '/batch-template.csv');
-  expect(screen.getByText(/brandName, classType, abv, netContents/i)).toBeInTheDocument();
+  expect(
+    screen.getByText(/brandName, classType, beverage_type, alcohol_content_expectation, abv/i),
+  ).toBeInTheDocument();
 });
 
 it('filters a completed batch and exports the visible review data', async () => {
@@ -299,7 +341,9 @@ it('filters a completed batch and exports the visible review data', async () => 
 
   expect(screen.getAllByRole('row')).toHaveLength(2);
   await user.click(screen.getByRole('button', { name: /export results/i }));
-  expect(serializeResults(batchFixture)).toContain('filename,status');
+  expect(serializeResults(batchFixture)).toContain(
+    'filename,beverageType,alcoholContentExpectation,status',
+  );
 });
 
 it('keeps batch row failures descriptive without injecting row alerts', () => {
@@ -502,8 +546,8 @@ it('reopens application-backed manual evidence with retry context after a retry 
   const user = userEvent.setup();
   const file = new File(['label'], 'deadline-error-retry.png', { type: 'image/png' });
   const csvText = [
-    'filename,brandName,classType,abv,proof,netContents,producerAddress,isImported,countryOfOrigin',
-    'deadline-error-retry.png,OLD TOM,Bourbon Whiskey,45%,90 Proof,750 mL,"Example, KY",false,',
+    'filename,brandName,classType,beverage_type,alcohol_content_expectation,abv,proof,netContents,producerAddress,isImported,countryOfOrigin',
+    'deadline-error-retry.png,OLD TOM,Bourbon Whiskey,distilled_spirits,declared,45%,90 Proof,750 mL,"Example, KY",false,',
   ].join('\n');
   const csv = new File([csvText], 'applications.csv', { type: 'text/csv' });
   Object.defineProperty(csv, 'text', { configurable: true, value: async () => csvText });
@@ -809,7 +853,19 @@ it('releases the full-review object URL when returning to the batch', async () =
 
 it('revalidates each batch visual confirmation and preserves the queue filter and search after returning', async () => {
   const user = userEvent.setup();
-  render(<App initialBatchItems={[readyBatchItem()]} />);
+  const originalCreate = URL.createObjectURL;
+  const originalRevoke = URL.revokeObjectURL;
+  Object.defineProperty(URL, 'createObjectURL', {
+    configurable: true,
+    value: vi.fn(() => 'blob:batch-review-evidence'),
+  });
+  Object.defineProperty(URL, 'revokeObjectURL', {
+    configurable: true,
+    value: vi.fn(),
+  });
+
+  try {
+    render(<App initialBatchItems={[readyBatchItem()]} />);
 
   await user.selectOptions(screen.getByLabelText(/^show$/i), 'needs_review');
   const search = screen.getByRole('searchbox', { name: /search filename/i });
@@ -846,7 +902,17 @@ it('revalidates each batch visual confirmation and preserves the queue filter an
   expect(screen.getByLabelText(/^show$/i)).toHaveFocus();
   await user.selectOptions(screen.getByLabelText(/^show$/i), 'match');
   expect(screen.getByRole('row', { name: /ready\.png/i })).toHaveTextContent('Match');
-  expect(extractFromImage).not.toHaveBeenCalled();
+    expect(extractFromImage).not.toHaveBeenCalled();
+  } finally {
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: originalCreate,
+    });
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: originalRevoke,
+    });
+  }
 });
 
 it('keeps raw OCR evidence when a batch correction becomes agent-entered', async () => {
@@ -890,9 +956,9 @@ it('keeps active batch work running while a ready item is in full review', async
   const first = readyBatchItem('first-live.png');
   const second = readyBatchItem('second-live.png');
   const csvText = [
-    'filename,brandName,classType,abv,proof,netContents,producerAddress,isImported,countryOfOrigin',
-    'first-live.png,OLD TOM,Bourbon Whiskey,45%,90 Proof,750 mL,"Example, KY",false,',
-    'second-live.png,OLD TOM,Bourbon Whiskey,45%,90 Proof,750 mL,"Example, KY",false,',
+    'filename,brandName,classType,beverage_type,alcohol_content_expectation,abv,proof,netContents,producerAddress,isImported,countryOfOrigin',
+    'first-live.png,OLD TOM,Bourbon Whiskey,distilled_spirits,declared,45%,90 Proof,750 mL,"Example, KY",false,',
+    'second-live.png,OLD TOM,Bourbon Whiskey,distilled_spirits,declared,45%,90 Proof,750 mL,"Example, KY",false,',
   ].join('\n');
   const csv = new File([csvText], 'applications.csv', { type: 'text/csv' });
   Object.defineProperty(csv, 'text', { configurable: true, value: async () => csvText });
@@ -1390,13 +1456,24 @@ it('prewarms OCR only after a reviewer enters a single or batch intake', async (
 
 it('keeps warning typography and legibility confirmations as separate reviewer checks', async () => {
   const user = userEvent.setup();
+  const originalCreate = URL.createObjectURL;
+  const originalRevoke = URL.revokeObjectURL;
+  Object.defineProperty(URL, 'createObjectURL', {
+    configurable: true,
+    value: vi.fn(() => 'blob:single-review-evidence'),
+  });
+  Object.defineProperty(URL, 'revokeObjectURL', {
+    configurable: true,
+    value: vi.fn(),
+  });
   vi.mocked(extractFromImage).mockResolvedValueOnce({
     extraction: {},
     rawText: '',
     source: 'ocr',
   });
 
-  await startManualReview(user);
+  try {
+    await startManualReview(user);
 
   const typography = await screen.findByRole('checkbox', {
     name: /i visually confirmed the warning heading is uppercase and bold/i,
@@ -1413,9 +1490,19 @@ it('keeps warning typography and legibility confirmations as separate reviewer c
   expect(typography).toBeChecked();
   expect(legibility).toBeChecked();
   expect(legibilityRow).toHaveTextContent('Match');
-  expect(legibilityRow).toHaveTextContent(
-    'An agent reviewed warning legibility, contrast, and placement.',
-  );
+    expect(legibilityRow).toHaveTextContent(
+      'An agent reviewed warning legibility, contrast, and placement.',
+    );
+  } finally {
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: originalCreate,
+    });
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: originalRevoke,
+    });
+  }
 });
 
 it('runs an in-memory same-origin sample benchmark with honest run labels and timings', async () => {
@@ -1743,14 +1830,14 @@ it('shows origin only for imported products and explains unsupported uploads inl
   );
 });
 
-it('shows the U.S. distilled-spirit prototype scope before manual review begins', async () => {
+it('shows the supported beverage profiles and human-review boundary before manual review begins', async () => {
   const user = userEvent.setup();
   render(<App />);
 
   await user.click(screen.getByRole('button', { name: /review a label/i }));
 
   expect(screen.getByRole('note', { name: /prototype scope/i })).toHaveTextContent(
-    'Proofline currently supports U.S. distilled-spirit labels. Other beverage classes and physical-label/typography requirements remain outside automated validation.',
+    'Proofline supports distilled spirits, beer, and wine. Alcohol-content exceptions and physical-label/typography requirements remain in human review.',
   );
 });
 
@@ -1818,151 +1905,27 @@ it('explains unsupported application number formats before extraction begins', a
   expect(await screen.findByRole('table')).toBeInTheDocument();
 });
 
-it('blocks explicitly out-of-scope beverages before extraction begins', async () => {
-  const user = userEvent.setup();
-  vi.mocked(extractFromImage).mockResolvedValueOnce({
-    extraction: {},
-    rawText: '',
-    source: 'ocr',
-  });
-  render(<App />);
-
-  await user.click(screen.getByRole('button', { name: /review a label/i }));
-  await user.type(screen.getByRole('textbox', { name: /^brand name$/i }), 'Old Tom');
-  await user.type(screen.getByRole('textbox', { name: /class\/type/i }), 'wine');
-  await user.type(screen.getByRole('textbox', { name: /alcohol by volume/i }), '45%');
-  await user.type(screen.getByRole('textbox', { name: /net contents/i }), '750 mL');
-  await user.type(screen.getByRole('textbox', { name: /producer address/i }), 'Old Tom, KY');
-  await user.upload(
-    screen.getByLabelText(/^choose label image$/i),
-    new File(['label'], 'wine.png', { type: 'image/png' }),
-  );
-
-  await user.click(screen.getByRole('button', { name: /start evidence review/i }));
-  await user.click(screen.getByRole('button', { name: /start evidence review/i }));
-
-  const scopeError = screen.getByRole('alert');
-  expect(scopeError).toHaveTextContent(
-    /proofline is limited to u\.s\. distilled-spirit labels/i,
-  );
-  expect(
-    scopeError.textContent?.match(/Proofline is limited to U\.S\. distilled-spirit labels\./g),
-  ).toHaveLength(1);
-  expect(extractFromImage).not.toHaveBeenCalled();
-});
-
-it('reports an out-of-scope beverage before requiring a label image', async () => {
+it('clears proof for beer or wine and forces declared alcohol content for spirits', async () => {
   const user = userEvent.setup();
   render(<App />);
 
   await user.click(screen.getByRole('button', { name: /review a label/i }));
-  await user.type(screen.getByRole('textbox', { name: /^brand name$/i }), 'Old Tom');
-  await user.type(screen.getByRole('textbox', { name: /class\/type/i }), 'Wine');
-  await user.type(screen.getByRole('textbox', { name: /alcohol by volume/i }), '45%');
-  await user.type(screen.getByRole('textbox', { name: /net contents/i }), '750 mL');
-  await user.type(screen.getByRole('textbox', { name: /producer address/i }), 'Old Tom, KY');
+  const beverageType = screen.getByLabelText(/beverage type/i);
+  const proof = screen.getByRole('textbox', { name: /^proof/i });
+  await user.type(proof, '90 Proof');
 
-  await user.click(screen.getByRole('button', { name: /start evidence review/i }));
+  await user.selectOptions(beverageType, 'beer');
+  expect(screen.queryByRole('textbox', { name: /^proof/i })).not.toBeInTheDocument();
+  const alcoholExpectation = screen.getByLabelText(/alcohol content expectation/i);
+  expect(alcoholExpectation).toHaveValue('declared');
+  await user.selectOptions(alcoholExpectation, 'manual_review');
 
-  const scopeError = screen.getByRole('alert');
-  expect(scopeError).toHaveTextContent(
-    /proofline is limited to u\.s\. distilled-spirit labels/i,
-  );
-  expect(scopeError).not.toHaveTextContent(/choose a jpeg, png, or webp label image/i);
-  expect(extractFromImage).not.toHaveBeenCalled();
-});
+  await user.selectOptions(beverageType, 'wine');
+  expect(screen.getByLabelText(/alcohol content expectation/i)).toHaveValue('manual_review');
 
-it('reports an out-of-scope imported beverage before image or origin validation', async () => {
-  const user = userEvent.setup();
-  render(<App />);
-
-  await user.click(screen.getByRole('button', { name: /review a label/i }));
-  await user.type(screen.getByRole('textbox', { name: /^brand name$/i }), 'Old Tom');
-  await user.type(screen.getByRole('textbox', { name: /class\/type/i }), 'Wine');
-  await user.type(screen.getByRole('textbox', { name: /alcohol by volume/i }), '45%');
-  await user.type(screen.getByRole('textbox', { name: /net contents/i }), '750 mL');
-  await user.type(screen.getByRole('textbox', { name: /producer address/i }), 'Old Tom, KY');
-  await user.click(screen.getByRole('checkbox', { name: /imported product/i }));
-
-  await user.click(screen.getByRole('button', { name: /start evidence review/i }));
-
-  const scopeError = screen.getByRole('alert');
-  expect(scopeError).toHaveTextContent(
-    /proofline is limited to u\.s\. distilled-spirit labels/i,
-  );
-  expect(scopeError).not.toHaveTextContent(/choose a jpeg, png, or webp label image/i);
-  expect(scopeError).not.toHaveTextContent(/country of origin is required/i);
-  expect(extractFromImage).not.toHaveBeenCalled();
-});
-
-it('clears stale image validation when a retry becomes out of scope', async () => {
-  const user = userEvent.setup();
-  render(<App />);
-
-  await user.click(screen.getByRole('button', { name: /review a label/i }));
-  await user.type(screen.getByRole('textbox', { name: /^brand name$/i }), 'Old Tom');
-  const classType = screen.getByRole('textbox', { name: /class\/type/i });
-  await user.type(classType, 'Bourbon Whiskey');
-  await user.type(screen.getByRole('textbox', { name: /alcohol by volume/i }), '45%');
-  await user.type(screen.getByRole('textbox', { name: /net contents/i }), '750 mL');
-  await user.type(screen.getByRole('textbox', { name: /producer address/i }), 'Old Tom, KY');
-
-  await user.click(screen.getByRole('button', { name: /start evidence review/i }));
-
-  const imageInput = screen.getByLabelText(/^choose label image$/i);
-  expect(imageInput).toHaveAttribute('aria-invalid', 'true');
-  expect(screen.getByRole('alert')).toHaveTextContent(
-    /choose a jpeg, png, or webp label image/i,
-  );
-
-  await user.clear(classType);
-  await user.type(classType, 'Wine');
-  await user.click(screen.getByRole('button', { name: /start evidence review/i }));
-
-  expect(screen.getAllByRole('alert')).toHaveLength(1);
-  expect(screen.getByRole('alert')).toHaveTextContent(
-    /proofline is limited to u\.s\. distilled-spirit labels/i,
-  );
-  expect(screen.queryByText(/choose a jpeg, png, or webp label image/i)).not.toBeInTheDocument();
-  expect(imageInput).not.toHaveAttribute('aria-invalid', 'true');
-  expect(extractFromImage).not.toHaveBeenCalled();
-});
-
-it('clears stale origin validation when an imported retry becomes out of scope', async () => {
-  const user = userEvent.setup();
-  render(<App />);
-
-  await user.click(screen.getByRole('button', { name: /review a label/i }));
-  await user.type(screen.getByRole('textbox', { name: /^brand name$/i }), 'Old Tom');
-  const classType = screen.getByRole('textbox', { name: /class\/type/i });
-  await user.type(classType, 'Bourbon Whiskey');
-  await user.type(screen.getByRole('textbox', { name: /alcohol by volume/i }), '45%');
-  await user.type(screen.getByRole('textbox', { name: /net contents/i }), '750 mL');
-  await user.type(screen.getByRole('textbox', { name: /producer address/i }), 'Old Tom, KY');
-  await user.click(screen.getByRole('checkbox', { name: /imported product/i }));
-  await user.upload(
-    screen.getByLabelText(/^choose label image$/i),
-    new File(['label'], 'old-tom.png', { type: 'image/png' }),
-  );
-
-  await user.click(screen.getByRole('button', { name: /start evidence review/i }));
-
-  const countryOfOrigin = screen.getByRole('textbox', { name: /country of origin/i });
-  expect(countryOfOrigin).toHaveAttribute('aria-invalid', 'true');
-  expect(screen.getByRole('alert')).toHaveTextContent(
-    /country of origin is required for an imported product/i,
-  );
-
-  await user.clear(classType);
-  await user.type(classType, 'Wine');
-  await user.click(screen.getByRole('button', { name: /start evidence review/i }));
-
-  expect(screen.getAllByRole('alert')).toHaveLength(1);
-  expect(screen.getByRole('alert')).toHaveTextContent(
-    /proofline is limited to u\.s\. distilled-spirit labels/i,
-  );
-  expect(countryOfOrigin).not.toHaveAttribute('aria-invalid', 'true');
-  expect(extractFromImage).not.toHaveBeenCalled();
+  await user.selectOptions(beverageType, 'distilled_spirits');
+  expect(screen.queryByLabelText(/alcohol content expectation/i)).not.toBeInTheDocument();
+  expect(screen.getByRole('textbox', { name: /^proof/i })).toHaveValue('');
 });
 
 it('keeps the reviewer informed when OCR rejects unexpectedly', async () => {

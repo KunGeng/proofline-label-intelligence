@@ -1,12 +1,14 @@
 import { parseBatchCsv } from './csv';
-import { unsupportedBeverageMessage } from '../../domain/scope';
 
 const file = (name: string, type = 'image/png') =>
   new File(['label'], name, { type });
 
+const header =
+  'filename,brandName,classType,beverage_type,alcohol_content_expectation,abv,proof,netContents,producerAddress,isImported,countryOfOrigin';
+
 const applicationCsv = (row: string): string =>
   [
-    'filename,brandName,classType,abv,proof,netContents,producerAddress,isImported,countryOfOrigin',
+    header,
     row,
   ].join('\n');
 
@@ -51,7 +53,7 @@ describe('parseBatchCsv', () => {
   it('parses a complete application row with quoted CSV cells', () => {
     const result = parseBatchCsv(
       applicationCsv(
-        'old-tom.png,OLD TOM,Bourbon Whiskey,45%,90 Proof,750 mL,"123 Main St, Austin, TX",false,',
+        'old-tom.png,OLD TOM,Bourbon Whiskey,distilled_spirits,declared,45%,90 Proof,750 mL,"123 Main St, Austin, TX",false,',
       ),
       [file('old-tom.png')],
     );
@@ -59,6 +61,8 @@ describe('parseBatchCsv', () => {
     expect(result.errors).toEqual([]);
     expect(result.matched[0]).toMatchObject({
       application: {
+        beverageType: 'distilled_spirits',
+        alcoholContentExpectation: 'declared',
         brandName: 'OLD TOM',
         classType: 'Bourbon Whiskey',
         abv: '45%',
@@ -70,25 +74,99 @@ describe('parseBatchCsv', () => {
     });
   });
 
-  it('rejects explicitly out-of-scope beverage rows before creating a queue job', () => {
+  it('accepts a wine manual-review row without declared ABV', () => {
     const result = parseBatchCsv(
       applicationCsv(
-        'old-tom.png,OLD TOM,wine,45%,90 Proof,750 mL,Example KY,false,',
+        'wine.png,ESTATE RED,Cabernet Sauvignon,wine,manual_review,,,750 mL,Example Winery CA,false,',
       ),
-      [file('old-tom.png')],
+      [file('wine.png')],
     );
 
-    expect(result.errors).toContain(`Row 2: ${unsupportedBeverageMessage}`);
-    expect(result.matched).toHaveLength(0);
-    expect(result.unmatchedFiles.map((item) => item.name)).toEqual(['old-tom.png']);
+    expect(result.errors).toEqual([]);
+    expect(result.matched[0]?.application).toMatchObject({
+      beverageType: 'wine',
+      alcoholContentExpectation: 'manual_review',
+      abv: undefined,
+    });
   });
+
+  it('rejects beer proof', () => {
+    const result = parseBatchCsv(
+      applicationCsv(
+        'beer.png,HOP FIELD,India Pale Ale,beer,declared,6.2%,12 Proof,355 mL,Example Brewing OR,false,',
+      ),
+      [file('beer.png')],
+    );
+
+    expect(result.errors).toContain(
+      'Row 2: proof is supported only for distilled_spirits.',
+    );
+  });
+
+  it.each([
+    {
+      name: 'a missing beverage type',
+      row: 'missing-beverage.png,ESTATE RED,Cabernet Sauvignon,,manual_review,,,750 mL,Example Winery CA,false,',
+      error: 'Row 2: beverage_type is required when application data is supplied.',
+    },
+    {
+      name: 'an invalid beverage type',
+      row: 'invalid-beverage.png,ESTATE RED,Cabernet Sauvignon,cider,manual_review,,,750 mL,Example Winery CA,false,',
+      error: 'Row 2: beverage_type must be one of distilled_spirits, beer, wine.',
+    },
+    {
+      name: 'a missing alcohol expectation',
+      row: 'missing-expectation.png,ESTATE RED,Cabernet Sauvignon,wine,,,,750 mL,Example Winery CA,false,',
+      error: 'Row 2: alcohol_content_expectation is required when application data is supplied.',
+    },
+    {
+      name: 'an invalid alcohol expectation',
+      row: 'invalid-expectation.png,ESTATE RED,Cabernet Sauvignon,wine,automatic,,,750 mL,Example Winery CA,false,',
+      error: 'Row 2: alcohol_content_expectation must be declared or manual_review.',
+    },
+  ])('rejects $name instead of inferring one from class/type', ({ row, error }) => {
+    const filename = row.split(',')[0]!;
+    const result = parseBatchCsv(applicationCsv(row), [file(filename)]);
+
+    expect(result.errors).toContain(error);
+    expect(result.matched).toHaveLength(0);
+  });
+
+  it('rejects manual_review for distilled spirits', () => {
+    const result = parseBatchCsv(
+      applicationCsv(
+        'spirit.png,OLD TOM,Bourbon Whiskey,distilled_spirits,manual_review,,,750 mL,Example KY,false,',
+      ),
+      [file('spirit.png')],
+    );
+
+    expect(result.errors).toContain(
+      'Row 2: alcohol_content_expectation "manual_review" is not supported for distilled_spirits.',
+    );
+  });
+
+  it.each(['beer', 'wine'] as const)(
+    'requires declared ABV for %s',
+    (beverageType) => {
+      const result = parseBatchCsv(
+        applicationCsv(
+          `declared-${beverageType}.png,ESTATE RED,Cabernet Sauvignon,${beverageType},declared,,,750 mL,Example Winery CA,false,`,
+        ),
+        [file(`declared-${beverageType}.png`)],
+      );
+
+      expect(result.errors).toContain(
+        'Row 2: abv is required when alcohol_content_expectation is declared.',
+      );
+    },
+  );
 
   it('associates each application with its normalized filename rather than selection order', () => {
     const result = parseBatchCsv(
       [
-        'filename,brandName,classType,abv,proof,netContents,producerAddress,isImported,countryOfOrigin',
-        'second.png,SECOND,Bourbon Whiskey,45%,90 Proof,750 mL,Second KY,false,',
-        'FIRST.PNG,FIRST,Bourbon Whiskey,40%,80 Proof,1 L,First KY,false,',
+        header,
+        'second.png,SECOND,Bourbon Whiskey,distilled_spirits,declared,45%,90 Proof,750 mL,Second KY,false,',
+        'FIRST.PNG,FIRST,Bourbon Whiskey,distilled_spirits,declared,40%,80 Proof,1 L,First KY,false,',
       ].join('\n'),
       [file('first.png'), file('second.png')],
     );
@@ -144,7 +222,7 @@ describe('parseBatchCsv', () => {
   it('rejects characters after a closed quoted CSV cell', () => {
     const result = parseBatchCsv(
       applicationCsv(
-        'old-tom.png,OLD TOM,Bourbon Whiskey,45%,90 Proof,750 mL,"Example KY"x,false,',
+        'old-tom.png,OLD TOM,Bourbon Whiskey,distilled_spirits,declared,45%,90 Proof,750 mL,"Example KY"x,false,',
       ),
       [file('old-tom.png')],
     );
@@ -158,13 +236,13 @@ describe('parseBatchCsv', () => {
   it('reports malformed application cells instead of coercing them', () => {
     const invalidBoolean = parseBatchCsv(
       applicationCsv(
-        'old-tom.png,OLD TOM,Bourbon Whiskey,45%,90 Proof,750 mL,Example KY,yes,',
+        'old-tom.png,OLD TOM,Bourbon Whiskey,distilled_spirits,declared,45%,90 Proof,750 mL,Example KY,yes,',
       ),
       [file('old-tom.png')],
     );
     const missingRequiredValue = parseBatchCsv(
       applicationCsv(
-        'old-tom.png,,Bourbon Whiskey,45%,90 Proof,750 mL,Example KY,false,',
+        'old-tom.png,,Bourbon Whiskey,distilled_spirits,declared,45%,90 Proof,750 mL,Example KY,false,',
       ),
       [file('old-tom.png')],
     );
@@ -182,15 +260,15 @@ describe('parseBatchCsv', () => {
   it.each([
     {
       field: 'abv',
-      row: 'old-tom.png,OLD TOM,Bourbon Whiskey,101%,90 Proof,750 mL,Example KY,false,',
+      row: 'old-tom.png,OLD TOM,Bourbon Whiskey,distilled_spirits,declared,101%,90 Proof,750 mL,Example KY,false,',
     },
     {
       field: 'proof',
-      row: 'old-tom.png,OLD TOM,Bourbon Whiskey,45%,not proof,750 mL,Example KY,false,',
+      row: 'old-tom.png,OLD TOM,Bourbon Whiskey,distilled_spirits,declared,45%,not proof,750 mL,Example KY,false,',
     },
     {
       field: 'netContents',
-      row: 'old-tom.png,OLD TOM,Bourbon Whiskey,45%,90 Proof,750,Example KY,false,',
+      row: 'old-tom.png,OLD TOM,Bourbon Whiskey,distilled_spirits,declared,45%,90 Proof,750,Example KY,false,',
     },
   ])('rejects malformed $field application data before creating a queue job', ({ field, row }) => {
     const result = parseBatchCsv(applicationCsv(row), [file('old-tom.png')]);
@@ -223,6 +301,8 @@ describe('parseBatchCsv', () => {
   it.each([
     'brandName',
     'classType',
+    'beverage_type',
+    'alcohol_content_expectation',
     'abv',
     'netContents',
     'producerAddress',
@@ -232,6 +312,8 @@ describe('parseBatchCsv', () => {
       filename: 'old-tom.png',
       brandName: 'OLD TOM',
       classType: 'Bourbon Whiskey',
+      beverage_type: 'distilled_spirits',
+      alcohol_content_expectation: 'declared',
       abv: '45%',
       proof: '90 Proof',
       netContents: '750 mL',
@@ -246,6 +328,8 @@ describe('parseBatchCsv', () => {
           cells.filename,
           cells.brandName,
           cells.classType,
+          cells.beverage_type,
+          cells.alcohol_content_expectation,
           cells.abv,
           cells.proof,
           cells.netContents,
@@ -266,7 +350,7 @@ describe('parseBatchCsv', () => {
   it('treats empty cells under application headers as an import error', () => {
     const result = parseBatchCsv(
       applicationCsv(
-        ['old-tom.png', '', '', '', '', '', '', '', ''].join(','),
+        ['old-tom.png', '', '', '', '', '', '', '', '', '', ''].join(','),
       ),
       [file('old-tom.png')],
     );
@@ -279,7 +363,7 @@ describe('parseBatchCsv', () => {
   it('requires a country of origin for imported application data', () => {
     const result = parseBatchCsv(
       applicationCsv(
-        'old-tom.png,OLD TOM,Bourbon Whiskey,45%,90 Proof,750 mL,Example KY,true,',
+        'old-tom.png,OLD TOM,Bourbon Whiskey,distilled_spirits,declared,45%,90 Proof,750 mL,Example KY,true,',
       ),
       [file('old-tom.png')],
     );
@@ -292,7 +376,7 @@ describe('parseBatchCsv', () => {
   it('retains a valid imported country of origin', () => {
     const result = parseBatchCsv(
       applicationCsv(
-        'old-tom.png,OLD TOM,Bourbon Whiskey,45%,90 Proof,750 mL,Example KY,true,Scotland',
+        'old-tom.png,OLD TOM,Bourbon Whiskey,distilled_spirits,declared,45%,90 Proof,750 mL,Example KY,true,Scotland',
       ),
       [file('old-tom.png')],
     );

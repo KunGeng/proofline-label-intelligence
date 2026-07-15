@@ -1,15 +1,18 @@
 import type { ApplicationData } from '../../domain/types';
 import { parseAbv, parseMilliliters, parseProof } from '../../domain/normalize';
 import {
-  isExplicitlyOutOfScopeBeverage,
-  unsupportedBeverageMessage,
-} from '../../domain/scope';
+  getBeverageProfile,
+  isAlcoholContentExpectation,
+  isBeverageType,
+} from '../../domain/beverageProfiles';
 import type { QueueJob } from './queue';
 
 const CSV_HEADERS = [
   'filename',
   'brandName',
   'classType',
+  'beverage_type',
+  'alcohol_content_expectation',
   'abv',
   'proof',
   'netContents',
@@ -24,7 +27,19 @@ type ApplicationHeader = Exclude<CsvHeader, 'filename'>;
 const REQUIRED_APPLICATION_HEADERS = [
   'brandName',
   'classType',
+  'beverage_type',
+  'alcohol_content_expectation',
   'abv',
+  'netContents',
+  'producerAddress',
+  'isImported',
+] as const satisfies readonly ApplicationHeader[];
+
+const REQUIRED_APPLICATION_VALUE_HEADERS = [
+  'brandName',
+  'classType',
+  'beverage_type',
+  'alcohol_content_expectation',
   'netContents',
   'producerAddress',
   'isImported',
@@ -168,7 +183,7 @@ const applicationForRow = (
 
   const errorCountBeforeValidation = errors.length;
 
-  for (const header of REQUIRED_APPLICATION_HEADERS) {
+  for (const header of REQUIRED_APPLICATION_VALUE_HEADERS) {
     if (!values[header]) {
       errors.push(
         `Row ${line}: ${header} is required when application data is supplied.`,
@@ -188,11 +203,54 @@ const applicationForRow = (
     );
   }
 
-  if (values.abv && parseAbv(values.abv) === undefined) {
+  const beverageType = values.beverage_type;
+  const alcoholContentExpectation = values.alcohol_content_expectation;
+  if (beverageType && !isBeverageType(beverageType)) {
+    errors.push(
+      `Row ${line}: beverage_type must be one of distilled_spirits, beer, wine.`,
+    );
+  }
+
+  if (alcoholContentExpectation && !isAlcoholContentExpectation(alcoholContentExpectation)) {
+    errors.push(
+      `Row ${line}: alcohol_content_expectation must be declared or manual_review.`,
+    );
+  }
+
+  const profile = beverageType && isBeverageType(beverageType)
+    ? getBeverageProfile(beverageType)
+    : undefined;
+  if (
+    profile &&
+    alcoholContentExpectation &&
+    isAlcoholContentExpectation(alcoholContentExpectation)
+  ) {
+    if (!profile.allowedAlcoholContentExpectations.includes(alcoholContentExpectation)) {
+      errors.push(
+        `Row ${line}: alcohol_content_expectation "${alcoholContentExpectation}" is not supported for ${beverageType}.`,
+      );
+    }
+
+    if (alcoholContentExpectation === 'declared' && !values.abv) {
+      errors.push(
+        `Row ${line}: abv is required when alcohol_content_expectation is declared.`,
+      );
+    }
+
+    if (!profile.supportsProof && values.proof) {
+      errors.push(`Row ${line}: proof is supported only for distilled_spirits.`);
+    }
+  }
+
+  if (
+    alcoholContentExpectation === 'declared' &&
+    values.abv &&
+    parseAbv(values.abv) === undefined
+  ) {
     errors.push(`Row ${line}: abv is not in the required format.`);
   }
 
-  if (values.proof && parseProof(values.proof) === undefined) {
+  if (values.proof && profile?.supportsProof && parseProof(values.proof) === undefined) {
     errors.push(`Row ${line}: proof is not in the required format.`);
   }
 
@@ -204,11 +262,22 @@ const applicationForRow = (
     return undefined;
   }
 
+  if (
+    !beverageType ||
+    !isBeverageType(beverageType) ||
+    !alcoholContentExpectation ||
+    !isAlcoholContentExpectation(alcoholContentExpectation)
+  ) {
+    return undefined;
+  }
+
   return {
+    beverageType,
+    alcoholContentExpectation,
     brandName: values.brandName!,
     classType: values.classType!,
-    abv: values.abv!,
-    ...(values.proof ? { proof: values.proof } : {}),
+    abv: alcoholContentExpectation === 'declared' ? values.abv! : undefined,
+    ...(profile?.supportsProof && values.proof ? { proof: values.proof } : {}),
     netContents: values.netContents!,
     producerAddress: values.producerAddress!,
     isImported,
@@ -350,11 +419,6 @@ export const parseBatchCsv = (csvText: string, files: File[]): CsvImportResult =
       errors.push(
         `Row ${row.line}: filename "${filename}" does not match a selected image.`,
       );
-      continue;
-    }
-
-    if (isExplicitlyOutOfScopeBeverage(values.classType ?? '')) {
-      errors.push(`Row ${row.line}: ${unsupportedBeverageMessage}`);
       continue;
     }
 

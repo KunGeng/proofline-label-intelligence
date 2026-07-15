@@ -66,6 +66,8 @@ const rawTextForFixture = (variant: DemoFixtureVariant): string => {
 };
 
 const oldTomApplication: ApplicationData = {
+  beverageType: 'distilled_spirits',
+  alcoholContentExpectation: 'declared',
   brandName: 'OLD TOM DISTILLERY',
   classType: 'Kentucky Straight Bourbon Whiskey',
   abv: '45%',
@@ -108,6 +110,8 @@ export const demoCases: DemoCase[] = [
     outcome: 'Domestic declaration, foreign origin',
     disclosure: 'Precomputed illustrative fixture — not a live OCR timing result.',
     application: {
+      beverageType: 'distilled_spirits',
+      alcoholContentExpectation: 'declared',
       brandName: 'NORTH COAST SPIRITS',
       classType: 'Single Malt Whisky',
       abv: '46%',
@@ -124,6 +128,8 @@ export const demoCases: DemoCase[] = [
     outcome: 'Title-case warning heading',
     disclosure: 'Precomputed illustrative fixture — not a live OCR timing result.',
     application: {
+      beverageType: 'distilled_spirits',
+      alcoholContentExpectation: 'declared',
       brandName: 'NORTH COAST SPIRITS',
       classType: 'Single Malt Whisky',
       abv: '46%',

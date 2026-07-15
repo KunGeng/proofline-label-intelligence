@@ -917,10 +917,11 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
             <p className="batch-csv-panel__schema">
               For validation, include{' '}
               <code>
-                filename, brandName, classType, abv, netContents, producerAddress, isImported
+                filename, brandName, classType, beverage_type, alcohol_content_expectation, abv,
+                netContents, producerAddress, isImported
               </code>.
-              {' '}Use <code>proof</code> when applicable and <code>countryOfOrigin</code> for
-              {' '}imported products.
+              {' '}Use <code>proof</code> only for distilled spirits, and{' '}
+              <code>countryOfOrigin</code> for imported products.
             </p>
             <label className="button button--secondary file-control">
               Optional application CSV

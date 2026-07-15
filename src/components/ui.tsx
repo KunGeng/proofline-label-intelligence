@@ -33,9 +33,8 @@ export function ScopeNotice() {
     <aside className="scope-notice" role="note" aria-label="Prototype scope">
       <strong>Prototype scope</strong>
       <p>
-        Proofline currently supports U.S. distilled-spirit labels. Other beverage
-        classes and physical-label/typography requirements remain outside automated
-        validation.
+        Proofline supports distilled spirits, beer, and wine. Alcohol-content exceptions
+        and physical-label/typography requirements remain in human review.
       </p>
     </aside>
   );

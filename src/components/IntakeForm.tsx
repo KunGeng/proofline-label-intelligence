@@ -9,15 +9,16 @@ import {
 import type { ApplicationData } from '../domain/types';
 import { parseAbv, parseMilliliters, parseProof } from '../domain/normalize';
 import {
-  isExplicitlyOutOfScopeBeverage,
-  unsupportedBeverageMessage,
-} from '../domain/scope';
+  BEVERAGE_TYPES,
+  getBeverageProfile,
+  type BeverageType,
+} from '../domain/beverageProfiles';
 import { ScopeNotice, SectionCard } from './ui';
 
 const ACCEPTED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
-const requiredApplicationFields = [
+const applicationFieldDefinitions = [
   ['brandName', 'Brand name'],
   ['classType', 'Class/type'],
   ['abv', 'Alcohol by volume'],
@@ -25,7 +26,7 @@ const requiredApplicationFields = [
   ['producerAddress', 'Producer address'],
 ] as const;
 
-type RequiredApplicationFieldKey = (typeof requiredApplicationFields)[number][0];
+type RequiredApplicationFieldKey = (typeof applicationFieldDefinitions)[number][0];
 type RequiredFieldKey =
   | RequiredApplicationFieldKey
   | 'proof'
@@ -43,6 +44,8 @@ const numericFormatChecks = [
 ] as const;
 
 const emptyApplication: ApplicationData = {
+  beverageType: 'distilled_spirits',
+  alcoholContentExpectation: 'declared',
   brandName: '',
   classType: '',
   abv: '',
@@ -80,6 +83,11 @@ export function IntakeForm({ onCancel, onSubmit }: IntakeFormProps) {
   const [dragging, setDragging] = useState(false);
   const fieldRefs = useRef<Partial<Record<RequiredFieldKey, HTMLInputElement | null>>>({});
   const focusAfterSubmit = useRef(false);
+  const beverageProfile = getBeverageProfile(application.beverageType);
+  const requiredApplicationFields = applicationFieldDefinitions.filter(
+    ([field]) =>
+      field !== 'abv' || application.alcoholContentExpectation === 'declared',
+  );
   const firstInvalidField = invalidFields[0];
   const invalidRequiredFields = requiredApplicationFields.filter(([field]) =>
     invalidFields.includes(field),
@@ -117,6 +125,19 @@ export function IntakeForm({ onCancel, onSubmit }: IntakeFormProps) {
     setFormatErrors([]);
   };
 
+  const updateBeverageType = (beverageType: BeverageType): void => {
+    const profile = getBeverageProfile(beverageType);
+    setApplication((current) => ({
+      ...current,
+      beverageType,
+      proof: profile.supportsProof ? current.proof : undefined,
+      alcoholContentExpectation: profile.supportsProof
+        ? 'declared'
+        : current.alcoholContentExpectation,
+    }));
+    setFormatErrors([]);
+  };
+
   const chooseFile = (candidate: File | undefined): void => {
     if (!candidate) {
       return;
@@ -144,7 +165,7 @@ export function IntakeForm({ onCancel, onSubmit }: IntakeFormProps) {
     event.preventDefault();
 
     const missingFields = requiredApplicationFields
-      .filter(([field]) => !application[field].trim())
+      .filter(([field]) => !application[field]?.trim())
       .map(([field]) => field);
 
     if (missingFields.length > 0) {
@@ -154,28 +175,15 @@ export function IntakeForm({ onCancel, onSubmit }: IntakeFormProps) {
     }
 
     const failedFormatChecks = numericFormatChecks.filter(
-      ([field, isValid]) => !isValid(application[field] ?? ''),
+      ([field, isValid]) =>
+        (field !== 'abv' || application.alcoholContentExpectation === 'declared') &&
+        (field !== 'proof' || beverageProfile.supportsProof) &&
+        !isValid(application[field] ?? ''),
     );
 
     if (failedFormatChecks.length > 0) {
       setFormatErrors(failedFormatChecks.map(([, , message]) => message));
       reportInvalidFields(failedFormatChecks.map(([field]) => field));
-      return;
-    }
-
-    if (isExplicitlyOutOfScopeBeverage(application.classType)) {
-      setFileError(undefined);
-      setInvalidFields((current) =>
-        current.filter(
-          (invalidField) =>
-            invalidField !== 'labelImage' && invalidField !== 'countryOfOrigin',
-        ),
-      );
-      setFormatErrors((current) =>
-        current.includes(unsupportedBeverageMessage)
-          ? current
-          : [...current, unsupportedBeverageMessage],
-      );
       return;
     }
 
@@ -194,7 +202,10 @@ export function IntakeForm({ onCancel, onSubmit }: IntakeFormProps) {
     void onSubmit(
       {
         ...application,
-        proof: application.proof?.trim() || undefined,
+        abv: application.alcoholContentExpectation === 'declared'
+          ? application.abv?.trim()
+          : undefined,
+        proof: beverageProfile.supportsProof ? application.proof?.trim() || undefined : undefined,
         countryOfOrigin: application.isImported
           ? application.countryOfOrigin?.trim()
           : undefined,
@@ -220,6 +231,41 @@ export function IntakeForm({ onCancel, onSubmit }: IntakeFormProps) {
         <SectionCard title="Application facts" eyebrow="01 / Declared information">
           <p className="required-note">Required fields are marked Required.</p>
           <div className="field-grid">
+            <label>
+              <span className="field-label">
+                Beverage type <span className="required-indicator" aria-hidden="true">Required</span>
+              </span>
+              <select
+                value={application.beverageType}
+                onChange={(event) => updateBeverageType(event.target.value as BeverageType)}
+              >
+                {BEVERAGE_TYPES.map((beverageType) => (
+                  <option key={beverageType} value={beverageType}>
+                    {getBeverageProfile(beverageType).label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {!beverageProfile.supportsProof ? (
+              <label>
+                <span className="field-label">
+                  Alcohol content expectation{' '}
+                  <span className="required-indicator" aria-hidden="true">Required</span>
+                </span>
+                <select
+                  value={application.alcoholContentExpectation}
+                  onChange={(event) =>
+                    updateField('alcoholContentExpectation', event.target.value)
+                  }
+                >
+                  {beverageProfile.allowedAlcoholContentExpectations.map((expectation) => (
+                    <option key={expectation} value={expectation}>
+                      {expectation === 'declared' ? 'Declared ABV' : 'Manual review'}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
             <label>
               <span className="field-label">
                 Brand name <span className="required-indicator" aria-hidden="true">Required</span>
@@ -257,42 +303,46 @@ export function IntakeForm({ onCancel, onSubmit }: IntakeFormProps) {
                 }
               />
             </label>
-            <label>
-              <span className="field-label">
-                Alcohol by volume{' '}
-                <span className="required-indicator" aria-hidden="true">Required</span>
-              </span>
-              <input
-                ref={(element) => {
-                  fieldRefs.current.abv = element;
-                }}
-                value={application.abv}
-                onChange={(event) => updateField('abv', event.target.value)}
-                required
-                autoComplete="off"
-                placeholder="e.g. 45%"
-                aria-invalid={invalidFields.includes('abv') || undefined}
-                aria-describedby={
-                  invalidFields.includes('abv') ? 'application-facts-error' : undefined
-                }
-              />
-            </label>
-            <label>
-              <span className="field-label">Proof <span className="optional">Optional</span></span>
-              <input
-                ref={(element) => {
-                  fieldRefs.current.proof = element;
-                }}
-                value={application.proof ?? ''}
-                onChange={(event) => updateField('proof', event.target.value)}
-                autoComplete="off"
-                placeholder="e.g. 90 Proof"
-                aria-invalid={invalidFields.includes('proof') || undefined}
-                aria-describedby={
-                  invalidFields.includes('proof') ? 'application-facts-error' : undefined
-                }
-              />
-            </label>
+            {application.alcoholContentExpectation === 'declared' ? (
+              <label>
+                <span className="field-label">
+                  Alcohol by volume{' '}
+                  <span className="required-indicator" aria-hidden="true">Required</span>
+                </span>
+                <input
+                  ref={(element) => {
+                    fieldRefs.current.abv = element;
+                  }}
+                  value={application.abv ?? ''}
+                  onChange={(event) => updateField('abv', event.target.value)}
+                  required
+                  autoComplete="off"
+                  placeholder="e.g. 45%"
+                  aria-invalid={invalidFields.includes('abv') || undefined}
+                  aria-describedby={
+                    invalidFields.includes('abv') ? 'application-facts-error' : undefined
+                  }
+                />
+              </label>
+            ) : null}
+            {beverageProfile.supportsProof ? (
+              <label>
+                <span className="field-label">Proof <span className="optional">Optional</span></span>
+                <input
+                  ref={(element) => {
+                    fieldRefs.current.proof = element;
+                  }}
+                  value={application.proof ?? ''}
+                  onChange={(event) => updateField('proof', event.target.value)}
+                  autoComplete="off"
+                  placeholder="e.g. 90 Proof"
+                  aria-invalid={invalidFields.includes('proof') || undefined}
+                  aria-describedby={
+                    invalidFields.includes('proof') ? 'application-facts-error' : undefined
+                  }
+                />
+              </label>
+            ) : null}
             <label>
               <span className="field-label">
                 Net contents <span className="required-indicator" aria-hidden="true">Required</span>

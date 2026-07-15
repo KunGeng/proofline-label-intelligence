@@ -3,7 +3,8 @@ import { downloadCsv, serializeResults } from './export';
 
 const item = ({
   reviewFlags = {
-    warningTypographyConfirmed: false,
+    warningUppercaseConfirmed: false,
+    warningBoldConfirmed: false,
     warningLegibilityConfirmed: false,
   },
   ...overrides
@@ -12,6 +13,15 @@ const item = ({
   file: new File(['label'], 'example.png', { type: 'image/png' }),
   name: 'example.png',
   size: 5,
+  application: {
+    beverageType: 'wine',
+    alcoholContentExpectation: 'manual_review',
+    brandName: 'Estate Red',
+    classType: 'Cabernet Sauvignon',
+    netContents: '750 mL',
+    producerAddress: 'Example Winery CA',
+    isImported: false,
+  },
   reviewFlags,
   status: 'ready',
   progress: 1,
@@ -33,7 +43,7 @@ const item = ({
         reason: 'Text differs.',
       },
       {
-        field: 'warningTypography',
+        field: 'warningUppercase',
         state: 'needs_review',
         expected: 'Agent confirmation required',
         observed: 'Awaiting agent confirmation',
@@ -54,8 +64,8 @@ const item = ({
 describe('serializeResults', () => {
   it('uses the documented header order and reports field-state totals with findings', () => {
     expect(serializeResults([item()])).toBe(
-      'filename,status,overallState,matchCount,mismatchCount,needsReviewCount,unreadableCount,findings,error\n' +
-        'example.png,ready,needs_review,1,1,1,1,warningText: mismatch; warningTypography: needs_review; countryOfOrigin: unreadable,',
+      'filename,beverageType,alcoholContentExpectation,status,overallState,matchCount,mismatchCount,needsReviewCount,unreadableCount,findings,error\n' +
+        'example.png,wine,manual_review,ready,needs_review,1,1,1,1,warningText: mismatch; warningUppercase: needs_review; countryOfOrigin: unreadable,',
     );
   });
 
@@ -66,11 +76,12 @@ describe('serializeResults', () => {
         status: 'error',
         result: undefined,
         error: 'OCR said "no", retry.',
+        application: undefined,
       }),
     ]);
 
     expect(result).toBe(
-      'filename,status,overallState,matchCount,mismatchCount,needsReviewCount,unreadableCount,findings,error\n"Old, ""Tom""\nReserve.png",error,,,,,,,"OCR said ""no"", retry."',
+      'filename,beverageType,alcoholContentExpectation,status,overallState,matchCount,mismatchCount,needsReviewCount,unreadableCount,findings,error\n"Old, ""Tom""\nReserve.png",,,error,,,,,,,"OCR said ""no"", retry."',
     );
   });
 
@@ -91,7 +102,7 @@ describe('serializeResults', () => {
     }
     expect(serializeResults([
       item({ name: ' =SUM(A1:A2)', status: 'error', result: undefined, error: '' }),
-    ])).toContain(' =SUM(A1:A2),error');
+    ])).toContain(' =SUM(A1:A2),wine,manual_review,error');
   });
 
   it('keeps a deadline manual-review status and reason in the existing status and error columns', () => {
@@ -100,11 +111,14 @@ describe('serializeResults', () => {
         status: 'manual_review_required',
         result: undefined,
         error: 'OCR stopped after five seconds. Open manual review to inspect the original label.',
+        application: undefined,
       }),
     ]);
 
     expect(result.split('\n')[1]?.split(',')).toEqual([
       'example.png',
+      '',
+      '',
       'manual_review_required',
       '',
       '',
@@ -118,7 +132,7 @@ describe('serializeResults', () => {
 
   it('returns the header alone for an empty queue', () => {
     expect(serializeResults([])).toBe(
-      'filename,status,overallState,matchCount,mismatchCount,needsReviewCount,unreadableCount,findings,error',
+      'filename,beverageType,alcoholContentExpectation,status,overallState,matchCount,mismatchCount,needsReviewCount,unreadableCount,findings,error',
     );
   });
 });

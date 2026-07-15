@@ -2,6 +2,8 @@ import type { QueueItem } from './queue';
 
 const RESULT_HEADERS = [
   'filename',
+  'beverageType',
+  'alcoholContentExpectation',
   'status',
   'overallState',
   'matchCount',
@@ -50,6 +52,8 @@ export const serializeResults = (items: QueueItem[]): string => {
     const counts = countFieldStates(item);
     const values = [
       item.name,
+      item.application?.beverageType ?? '',
+      item.application?.alcoholContentExpectation ?? '',
       item.status,
       item.result?.overallState ?? '',
       item.result ? counts.match : '',

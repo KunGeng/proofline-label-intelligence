@@ -40,8 +40,8 @@ describe('submission documentation', () => {
     const template = await readFile('public/batch-template.csv', 'utf8');
 
     expect(template).toBe(
-      'filename,brandName,classType,abv,proof,netContents,producerAddress,isImported,countryOfOrigin\n' +
-        'old-tom-bourbon.jpg,OLD TOM DISTILLERY,Kentucky Straight Bourbon Whiskey,45%,90,750 mL,"Old Tom Distillery, Louisville, KY",false,\n',
+      'filename,brandName,classType,beverage_type,alcohol_content_expectation,abv,proof,netContents,producerAddress,isImported,countryOfOrigin\n' +
+        'old-tom-bourbon.jpg,OLD TOM DISTILLERY,Kentucky Straight Bourbon Whiskey,distilled_spirits,declared,45%,90,750 mL,"Old Tom Distillery, Louisville, KY",false,\n',
     );
 
     const sampleLabel = await readFile('public/demo/old-tom-bourbon.jpg');
