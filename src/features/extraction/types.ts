@@ -5,7 +5,15 @@ export interface ExtractionProgress {
   value: number;
 }
 
+export type ExtractionOutcome =
+  | 'completed'
+  | 'no-usable-evidence'
+  | 'deadline-exceeded'
+  | 'cancelled'
+  | 'error';
+
 export interface ExtractionJobResult {
+  outcome: ExtractionOutcome;
   extraction: LabelExtraction;
   rawText: string;
   thumbnailUrl?: string;
@@ -14,6 +22,9 @@ export interface ExtractionJobResult {
   durationMs?: number;
   timings?: ExtractionTimings;
 }
+
+export const isManualRecoveryOutcome = (outcome: ExtractionOutcome): boolean =>
+  outcome === 'deadline-exceeded' || outcome === 'no-usable-evidence';
 
 export interface ExtractionTimings {
   preparationMs: number;

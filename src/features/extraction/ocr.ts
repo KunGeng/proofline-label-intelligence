@@ -8,6 +8,7 @@ import type {
   ExtractionProgress,
   ProgressListener,
 } from './types';
+import type { LabelExtraction } from '../../domain/types';
 
 const MAX_IMAGE_EDGE = 2_000;
 const MAX_CONCURRENT_WORKERS = 2;
@@ -188,6 +189,7 @@ const reportWorkerProgress = (onProgress: ProgressListener) =>
   };
 
 const unreadableResult = (thumbnailUrl?: string): ExtractionJobResult => ({
+  outcome: 'error',
   extraction: {},
   rawText: '',
   thumbnailUrl,
@@ -199,6 +201,7 @@ const inputErrorResult = (
   error: ImageInputError,
   thumbnailUrl?: string,
 ): ExtractionJobResult => ({
+  outcome: 'error',
   extraction: {},
   rawText: '',
   thumbnailUrl,
@@ -207,6 +210,7 @@ const inputErrorResult = (
 });
 
 const cancelledResult = (thumbnailUrl?: string): ExtractionJobResult => ({
+  outcome: 'cancelled',
   extraction: {},
   rawText: '',
   thumbnailUrl,
@@ -215,12 +219,16 @@ const cancelledResult = (thumbnailUrl?: string): ExtractionJobResult => ({
 });
 
 const deadlineExceededResult = (thumbnailUrl?: string): ExtractionJobResult => ({
+  outcome: 'deadline-exceeded',
   extraction: {},
   rawText: '',
   thumbnailUrl,
   error: 'deadline-exceeded',
   source: 'ocr',
 });
+
+export const hasUsableExtraction = (extraction: LabelExtraction): boolean =>
+  Object.values(extraction).some((candidate) => Boolean(candidate?.value.trim()));
 
 const terminateWorker = async (worker: OcrWorker): Promise<boolean> => {
   try {
@@ -663,12 +671,25 @@ export const createOcrEngine = (
         throw new OcrCancellationError();
       }
 
+      const extraction = extractFromText(rawText, confidenceFor);
+      if (!rawText.trim() || !hasUsableExtraction(extraction)) {
+        completed = true;
+        return {
+          outcome: 'no-usable-evidence',
+          extraction,
+          rawText,
+          thumbnailUrl,
+          source: 'ocr',
+        };
+      }
+
       const completedAt = now();
       const totalMs = completedAt - startedAt;
       completed = true;
 
       return {
-        extraction: extractFromText(rawText, confidenceFor),
+        outcome: 'completed',
+        extraction,
         rawText,
         thumbnailUrl,
         source: 'ocr',

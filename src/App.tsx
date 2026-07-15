@@ -11,7 +11,10 @@ import { validateLabel } from './domain/validation';
 import type { ApplicationData, LabelExtraction, ReviewFlags } from './domain/types';
 import { demoCases } from './features/demo/cases';
 import { extractFromImage, prewarmOcr } from './features/extraction/ocr';
-import type { DemoCaseId } from './features/extraction/types';
+import {
+  isManualRecoveryOutcome,
+  type DemoCaseId,
+} from './features/extraction/types';
 import type { QueueItem } from './features/intake/queue';
 import {
   clearManualCandidate,
@@ -247,15 +250,28 @@ export function App({ initialBatchItems }: AppProps) {
           return current;
         }
 
-        if (output.error === 'deadline-exceeded') {
+        if (isManualRecoveryOutcome(output.outcome)) {
+          const isNoUsableEvidence = output.outcome === 'no-usable-evidence';
           return {
             ...current,
             phase: 'ready',
             isManualEvidence: true,
-            extraction: preserveDraft ? current.extraction : {},
-            rawText: preserveDraft ? current.rawText : '',
+            extraction: isNoUsableEvidence
+              ? preserveDraft
+                ? mergeUntouchedOcrEvidence(
+                    current.extraction,
+                    output.extraction,
+                    current.manualEvidenceLocks,
+                  )
+                : output.extraction
+              : preserveDraft ? current.extraction : {},
+            rawText: isNoUsableEvidence
+              ? output.rawText || current.rawText
+              : preserveDraft ? current.rawText : '',
             disclosure:
-              'OCR stopped after five seconds. The original label is ready for manual evidence review.',
+              isNoUsableEvidence
+                ? 'No usable OCR evidence was produced. Inspect the original label, enter manual evidence, retry OCR, or retake a straight-on, evenly lit, glare-free photo.'
+                : 'OCR stopped after five seconds. The original label is ready for manual evidence review.',
             shouldFocusManualDisclosure: true,
             progress: undefined,
             durationMs: undefined,

@@ -38,6 +38,7 @@ const extraction: LabelExtraction = {
 };
 
 const successfulResult = () => ({
+  outcome: 'completed' as const,
   extraction,
   rawText: 'OLD TOM',
   source: 'fixture' as const,
@@ -240,6 +241,7 @@ describe('createReviewQueue', () => {
     const queue = createReviewQueue(
       [{ id: 'unreadable', file: file('unreadable.png'), application }],
       async () => ({
+        outcome: 'error' as const,
         extraction: {},
         rawText: '',
         source: 'fixture',
@@ -262,6 +264,7 @@ describe('createReviewQueue', () => {
     const queue = createReviewQueue([
       { id: 'deadline', file: original, application },
     ], async () => ({
+      outcome: 'deadline-exceeded' as const,
       extraction: {},
       rawText: '',
       source: 'ocr',
@@ -279,6 +282,79 @@ describe('createReviewQueue', () => {
       progress: 1,
     });
     expect(queue.items[0]?.result).toBeUndefined();
+  });
+
+  it('maps no usable OCR evidence to manual review and retains review inputs without timing', async () => {
+    const original = file('no-evidence.png');
+    const queue = createReviewQueue([
+      { id: 'no-evidence', file: original, application },
+    ], async () => ({
+      outcome: 'no-usable-evidence',
+      extraction: {},
+      rawText: 'decorative strokes only',
+      source: 'ocr',
+      thumbnailUrl: 'data:image/jpeg;base64,preview',
+      durationMs: 1_234,
+    }), 1);
+
+    await queue.start();
+
+    expect(queue.items[0]).toMatchObject({
+      status: 'manual_review_required',
+      file: original,
+      application,
+      rawText: 'decorative strokes only',
+      thumbnailUrl: 'data:image/jpeg;base64,preview',
+      progress: 1,
+    });
+    expect(queue.items[0]?.result).toBeUndefined();
+    expect(queue.items[0]?.durationMs).toBeUndefined();
+  });
+
+  it('retains blank raw OCR text for a no-usable-evidence item', async () => {
+    const queue = createReviewQueue([
+      { id: 'blank-no-evidence', file: file('blank-no-evidence.png') },
+    ], async () => ({
+      outcome: 'no-usable-evidence',
+      extraction: {},
+      rawText: '',
+      source: 'ocr' as const,
+      thumbnailUrl: 'data:image/jpeg;base64,preview',
+    }), 1);
+
+    await queue.start();
+
+    expect(queue.items[0]).toMatchObject({
+      status: 'manual_review_required',
+      rawText: '',
+      thumbnailUrl: 'data:image/jpeg;base64,preview',
+    });
+  });
+
+  it('continues the queue after a no-usable-evidence item completes', async () => {
+    const calls: string[] = [];
+    const queue = createReviewQueue([
+      { id: 'no-evidence', file: file('no-evidence.png') },
+      { id: 'next', file: file('next.png') },
+    ], async (job) => {
+      calls.push(job.id);
+      return job.id === 'no-evidence'
+        ? {
+            outcome: 'no-usable-evidence',
+            extraction: {},
+            rawText: 'decorative strokes only',
+            source: 'ocr' as const,
+          }
+        : successfulResult();
+    }, 1);
+
+    await queue.start();
+
+    expect(calls).toEqual(['no-evidence', 'next']);
+    expect(queue.items.map((item) => item.status)).toEqual([
+      'manual_review_required',
+      'extracted_pending_application',
+    ]);
   });
 
   it('retains a beer manual-review profile through a deadline and retry', async () => {
@@ -301,7 +377,13 @@ describe('createReviewQueue', () => {
         });
         attempts += 1;
         return attempts === 1
-          ? { extraction: {}, rawText: '', source: 'ocr', error: 'deadline-exceeded' }
+          ? {
+              outcome: 'deadline-exceeded' as const,
+              extraction: {},
+              rawText: '',
+              source: 'ocr',
+              error: 'deadline-exceeded',
+            }
           : successfulResult();
       },
       1,
@@ -330,7 +412,13 @@ describe('createReviewQueue', () => {
     ], async (job) => {
       calls.push(job.id);
       return job.id === 'deadline'
-        ? { extraction: {}, rawText: '', source: 'ocr', error: 'deadline-exceeded' }
+        ? {
+            outcome: 'deadline-exceeded' as const,
+            extraction: {},
+            rawText: '',
+            source: 'ocr',
+            error: 'deadline-exceeded',
+          }
         : successfulResult();
     }, 1);
 
@@ -350,8 +438,15 @@ describe('createReviewQueue', () => {
       async () => {
         attempts += 1;
         return attempts === 1
-          ? { extraction: {}, rawText: '', source: 'ocr', error: 'deadline-exceeded' }
+          ? {
+              outcome: 'deadline-exceeded' as const,
+              extraction: {},
+              rawText: '',
+              source: 'ocr',
+              error: 'deadline-exceeded',
+            }
           : {
+              outcome: 'completed' as const,
               extraction: {
                 brandName: {
                   value: 'OCR BRAND', rawText: 'OCR BRAND', confidence: 0.99, source: 'ocr',
@@ -401,8 +496,15 @@ describe('createReviewQueue', () => {
       async () => {
         attempts += 1;
         return attempts === 1
-          ? { extraction: {}, rawText: '', source: 'ocr', error: 'deadline-exceeded' }
+          ? {
+              outcome: 'deadline-exceeded' as const,
+              extraction: {},
+              rawText: '',
+              source: 'ocr',
+              error: 'deadline-exceeded',
+            }
           : {
+              outcome: 'error' as const,
               extraction: {
                 brandName: {
                   value: 'OCR BRAND', rawText: 'OCR BRAND', confidence: 0.99, source: 'ocr',

@@ -5,7 +5,11 @@ import type {
   ReviewFlags,
   VerificationResult,
 } from '../../domain/types';
-import type { ExtractFromImage, ExtractionJobResult } from '../extraction/types';
+import {
+  isManualRecoveryOutcome,
+  type ExtractFromImage,
+  type ExtractionJobResult,
+} from '../extraction/types';
 import {
   mergeUntouchedOcrEvidence,
   type ManualEvidenceLocks,
@@ -237,6 +241,11 @@ const applySuccessfulOutput = (
   retainThumbnail(item, output.thumbnailUrl);
 };
 
+const manualRecoveryDisclosureFor = (output: ExtractionJobResult): string =>
+  output.outcome === 'no-usable-evidence'
+    ? 'No usable OCR evidence was produced. Inspect the original label, enter manual evidence, retry OCR, or retake a straight-on, evenly lit, glare-free photo.'
+    : 'OCR stopped after five seconds. Open manual review to inspect the original label.';
+
 export const queueWorkerFromExtractor = (
   extract: ExtractFromImage,
 ): QueueWorker => async (job, report) =>
@@ -319,25 +328,27 @@ export const createReviewQueue = (
         return;
       }
 
-      item.durationMs = output.durationMs ?? Date.now() - startedAt;
+      item.durationMs = output.outcome === 'completed'
+        ? output.durationMs ?? Date.now() - startedAt
+        : undefined;
 
-      if (output.error === 'deadline-exceeded') {
+      if (isManualRecoveryOutcome(output.outcome)) {
         item.extraction = mergeOutputEvidence(item, output);
-        item.rawText = output.rawText || item.rawText;
+        item.rawText = output.rawText || (item.rawText ?? output.rawText);
         item.source = output.source;
         retainThumbnail(item, output.thumbnailUrl);
         item.result = undefined;
         item.status = 'manual_review_required';
         item.isManualEvidence = true;
         item.progress = 1;
-        item.error = 'OCR stopped after five seconds. Open manual review to inspect the original label.';
+        item.error = manualRecoveryDisclosureFor(output);
         return;
       }
 
-      if (output.error) {
+      if (output.outcome !== 'completed') {
         applySuccessfulOutput(item, output);
         item.status = 'error';
-        item.error = output.error;
+        item.error = output.error ?? 'Label extraction failed.';
         return;
       }
 

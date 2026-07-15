@@ -165,6 +165,7 @@ describe('OCR engine facade', () => {
 
     const result = await engine.extract(file(), vi.fn());
 
+    expect(result.outcome).toBe('completed');
     expect(result.timings).toEqual({
       preparationMs: 20,
       workerWaitMs: 20,
@@ -172,6 +173,34 @@ describe('OCR engine facade', () => {
       totalMs: 90,
     });
     expect(result.durationMs).toBe(90);
+  });
+
+  it.each([
+    { label: 'blank recognition text', rawText: '' },
+    { label: 'nonblank text with no parsable label candidate', rawText: 'decorative strokes only' },
+  ])('returns no usable evidence for $label', async ({ rawText }) => {
+    const worker = {
+      recognize: vi.fn().mockResolvedValue({
+        data: { text: rawText, confidence: 99, words: [], lines: [] },
+      }),
+      terminate: vi.fn().mockResolvedValue(undefined),
+    } as unknown as OcrWorker;
+    const engine = createOcrEngine({
+      createWorker: vi.fn().mockResolvedValue(worker) as unknown as WorkerFactory,
+      prepareImage: preparedImage,
+    });
+
+    const result = await engine.extract(file(), vi.fn());
+
+    expect(result).toMatchObject({
+      outcome: 'no-usable-evidence',
+      extraction: {},
+      rawText,
+      thumbnailUrl: expect.any(String),
+      source: 'ocr',
+    });
+    expect(result.durationMs).toBeUndefined();
+    expect(result.timings).toBeUndefined();
   });
 
   it('settles an aborted recognition, retires its worker, and replaces it', async () => {
@@ -204,6 +233,7 @@ describe('OCR engine facade', () => {
     controller.abort();
 
     await expect(cancelled).resolves.toMatchObject({
+      outcome: 'cancelled',
       extraction: {},
       rawText: '',
       error: 'cancelled',
@@ -411,6 +441,7 @@ describe('OCR engine facade', () => {
     await vi.advanceTimersByTimeAsync(1);
 
     await expect(result).resolves.toMatchObject({
+      outcome: 'deadline-exceeded',
       error: 'deadline-exceeded',
       source: 'ocr',
     });
@@ -1000,6 +1031,7 @@ describe('extractFromImage worker initialization', () => {
     errorHandler?.('Missing local language data.');
 
     await expect(resultPromise).resolves.toMatchObject({
+      outcome: 'error',
       error: 'unreadable',
       source: 'ocr',
     });
@@ -1030,6 +1062,8 @@ describe('extractFromImage worker reuse', () => {
 
     expect(firstResult.error).toBeUndefined();
     expect(secondResult.error).toBeUndefined();
+    expect(firstResult.outcome).toBe('completed');
+    expect(secondResult.outcome).toBe('completed');
     expect(firstResult.durationMs).toBeGreaterThanOrEqual(0);
     expect(secondResult.durationMs).toBeGreaterThanOrEqual(0);
     expect(workerFactoryMock).toHaveBeenCalledTimes(1);
@@ -1060,11 +1094,16 @@ describe('extractFromImage worker reuse', () => {
     const failedResult = await extract(file(), vi.fn());
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(failedResult).toMatchObject({ error: 'unreadable', source: 'ocr' });
+    expect(failedResult).toMatchObject({
+      outcome: 'error',
+      error: 'unreadable',
+      source: 'ocr',
+    });
     expect(failingWorker.terminate).toHaveBeenCalledTimes(1);
 
     const recoveredResult = await extract(file(), vi.fn());
 
+    expect(recoveredResult.outcome).toBe('completed');
     expect(recoveredResult.error).toBeUndefined();
     expect(replacementWorker.recognize).toHaveBeenCalledTimes(1);
     expect(workerFactoryMock).toHaveBeenCalledTimes(2);
@@ -1079,6 +1118,7 @@ describe('extractFromImage input validation', () => {
     );
 
     expect(result).toMatchObject({
+      outcome: 'error',
       error: 'Upload a JPEG, PNG, or WebP image.',
       source: 'ocr',
     });
@@ -1093,6 +1133,7 @@ describe('extractFromImage input validation', () => {
     );
 
     expect(result).toMatchObject({
+      outcome: 'error',
       error: 'Images must be 10 MB or smaller.',
       source: 'ocr',
     });

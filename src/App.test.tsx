@@ -220,6 +220,7 @@ it('offers a guided demo and a label-review entry point', () => {
 it('submits a beer manual-review record without proof or declared ABV', async () => {
   const user = userEvent.setup();
   vi.mocked(extractFromImage).mockResolvedValueOnce({
+    outcome: 'completed',
     extraction: {},
     rawText: '',
     source: 'ocr',
@@ -489,12 +490,14 @@ it('keeps batch manual values and deliberate blanks when retry OCR returns anoth
   const user = userEvent.setup();
   vi.mocked(extractFromImage)
     .mockResolvedValueOnce({
+      outcome: 'deadline-exceeded',
       extraction: {},
       rawText: '',
       source: 'ocr',
       error: 'deadline-exceeded',
     })
     .mockResolvedValueOnce({
+      outcome: 'deadline-exceeded',
       extraction: {},
       rawText: '',
       source: 'ocr',
@@ -553,6 +556,7 @@ it('reopens application-backed manual evidence with retry context after a retry 
   Object.defineProperty(csv, 'text', { configurable: true, value: async () => csvText });
   vi.mocked(extractFromImage)
     .mockResolvedValueOnce({
+      outcome: 'deadline-exceeded',
       extraction: {},
       rawText: '',
       source: 'ocr',
@@ -560,6 +564,7 @@ it('reopens application-backed manual evidence with retry context after a retry 
       durationMs: 5_000,
     })
     .mockResolvedValueOnce({
+      outcome: 'error',
       extraction: { brandName: ocrCandidate('OCR BRAND') },
       rawText: 'OCR BRAND',
       source: 'ocr',
@@ -615,12 +620,14 @@ it('reopens preserved batch manual evidence after a manual retry completes witho
   const user = userEvent.setup();
   vi.mocked(extractFromImage)
     .mockResolvedValueOnce({
+      outcome: 'deadline-exceeded',
       extraction: {},
       rawText: '',
       source: 'ocr',
       error: 'deadline-exceeded',
     })
     .mockResolvedValueOnce({
+      outcome: 'completed',
       extraction: {
         brandName: ocrCandidate('OCR BRAND'),
         proof: ocrCandidate('90 Proof'),
@@ -675,6 +682,7 @@ it('returns focus to a direct Retry OCR row action after another deadline', asyn
   const retryResult = deferred<ExtractionJobResult>();
   vi.mocked(extractFromImage)
     .mockResolvedValueOnce({
+      outcome: 'deadline-exceeded',
       extraction: {},
       rawText: '',
       source: 'ocr',
@@ -698,6 +706,7 @@ it('returns focus to a direct Retry OCR row action after another deadline', asyn
   });
 
   retryResult.resolve({
+    outcome: 'deadline-exceeded',
     extraction: {},
     rawText: '',
     source: 'ocr',
@@ -965,6 +974,7 @@ it('keeps active batch work running while a ready item is in full review', async
   vi.mocked(extractFromImage).mockImplementation((file) =>
     file.name === first.name
       ? Promise.resolve({
+          outcome: 'completed' as const,
           extraction: first.extraction!,
           rawText: first.rawText!,
           source: 'ocr',
@@ -988,6 +998,7 @@ it('keeps active batch work running while a ready item is in full review', async
     }),
   );
   secondExtraction.resolve({
+    outcome: 'completed',
     extraction: second.extraction!,
     rawText: second.rawText!,
     source: 'ocr',
@@ -1033,6 +1044,7 @@ it('retries a failed batch extraction with the original image', async () => {
   vi.mocked(extractFromImage)
     .mockRejectedValueOnce(new Error('Temporary OCR failure'))
     .mockResolvedValueOnce({
+      outcome: 'completed',
       extraction: {},
       rawText: 'OLD TOM',
       source: 'ocr',
@@ -1071,7 +1083,12 @@ it('keeps a replacement batch processing when a cleared extraction settles late'
 
   await user.upload(imageInput, new File(['new'], 'new.png', { type: 'image/png' }));
   await user.click(screen.getByRole('button', { name: /begin batch review/i }));
-  oldExtraction.resolve({ extraction: {}, rawText: 'OLD', source: 'ocr' });
+  oldExtraction.resolve({
+    outcome: 'completed',
+    extraction: {},
+    rawText: 'OLD',
+    source: 'ocr',
+  });
 
   await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
 
@@ -1080,7 +1097,12 @@ it('keeps a replacement batch processing when a cleared extraction settles late'
     expect(screen.getByText('0 of 1 processed')).toBeInTheDocument();
   });
 
-  newExtraction.resolve({ extraction: {}, rawText: 'NEW', source: 'ocr' });
+  newExtraction.resolve({
+    outcome: 'completed',
+    extraction: {},
+    rawText: 'NEW',
+    source: 'ocr',
+  });
   expect(await screen.findByText('Application data required')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: /^begin batch review$/i })).toBeEnabled();
 });
@@ -1211,6 +1233,7 @@ it('orients the fixture-backed demo around the next three review actions', async
 it('labels a manual review with next reviewer actions', async () => {
   const user = userEvent.setup();
   vi.mocked(extractFromImage).mockResolvedValueOnce({
+    outcome: 'completed',
     extraction: {},
     rawText: '',
     source: 'ocr',
@@ -1233,6 +1256,7 @@ it('opens preserved manual evidence review for a deadline result and focuses its
     revokeObjectURL: vi.fn(),
   });
   vi.mocked(extractFromImage).mockResolvedValueOnce({
+    outcome: 'deadline-exceeded',
     extraction: {},
     rawText: '',
     source: 'ocr',
@@ -1247,12 +1271,77 @@ it('opens preserved manual evidence review for a deadline result and focuses its
   expect(screen.queryByRole('status', { name: /label extraction progress/i })).not.toBeInTheDocument();
 });
 
+it('opens a single no-usable-evidence result for focused manual recovery without timing', async () => {
+  const user = userEvent.setup();
+  vi.stubGlobal('URL', {
+    createObjectURL: vi.fn().mockReturnValue('blob:old-tom'),
+    revokeObjectURL: vi.fn(),
+  });
+  vi.mocked(extractFromImage).mockResolvedValueOnce({
+    outcome: 'no-usable-evidence',
+    extraction: {},
+    rawText: 'decorative strokes only',
+    thumbnailUrl: 'data:image/jpeg;base64,fixture',
+    source: 'ocr',
+    durationMs: 1_234,
+  });
+
+  await startManualReview(user);
+
+  const disclosure = await screen.findByText(
+    'No usable OCR evidence was produced. Inspect the original label, enter manual evidence, retry OCR, or retake a straight-on, evenly lit, glare-free photo.',
+  );
+  expect(disclosure).toHaveFocus();
+  expect(screen.getByRole('img', { name: /label preview: old-tom\.png/i })).toBeInTheDocument();
+  expect(screen.getByText('decorative strokes only')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /retry OCR/i })).toBeInTheDocument();
+  expect(screen.queryByText(/Local OCR finished in/i)).not.toBeInTheDocument();
+});
+
+it('opens batch no-usable-evidence for manual entry with the original preview and no timing', async () => {
+  const user = userEvent.setup();
+  vi.stubGlobal('URL', {
+    createObjectURL: vi.fn().mockReturnValue('blob:no-evidence'),
+    revokeObjectURL: vi.fn(),
+  });
+  vi.mocked(extractFromImage).mockResolvedValueOnce({
+    outcome: 'no-usable-evidence',
+    extraction: {},
+    rawText: 'decorative strokes only',
+    thumbnailUrl: 'data:image/jpeg;base64,fixture',
+    source: 'ocr',
+    durationMs: 1_234,
+  });
+
+  render(<App />);
+  await user.click(screen.getByRole('button', { name: /review a batch/i }));
+  await user.upload(
+    screen.getByLabelText(/^choose label images$/i),
+    new File(['label'], 'no-evidence.png', { type: 'image/png' }),
+  );
+  await user.click(screen.getByRole('button', { name: /begin batch review/i }));
+  await user.click(await screen.findByRole('button', {
+    name: /open manual review for no-evidence\.png/i,
+  }));
+
+  const disclosure = await screen.findByText(
+    'No usable OCR evidence was produced. Inspect the original label, enter manual evidence, retry OCR, or retake a straight-on, evenly lit, glare-free photo.',
+  );
+  expect(disclosure).toHaveFocus();
+  expect(screen.getByRole('heading', { name: /manual evidence entry/i })).toBeInTheDocument();
+  expect(screen.getByRole('img', { name: /label preview: no-evidence\.png/i })).toBeInTheDocument();
+  expect(screen.getByText('decorative strokes only')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /retry OCR/i })).toBeInTheDocument();
+  expect(screen.queryByText(/Local OCR finished in/i)).not.toBeInTheDocument();
+});
+
 it('prevents a duplicate manual OCR retry while the first retry is processing', async () => {
   const user = userEvent.setup();
   const retryResult = deferred<ExtractionJobResult>();
   const duplicateRetryResult = deferred<ExtractionJobResult>();
   vi.mocked(extractFromImage)
     .mockResolvedValueOnce({
+      outcome: 'deadline-exceeded',
       extraction: {},
       rawText: '',
       source: 'ocr',
@@ -1282,6 +1371,7 @@ it('prevents a duplicate manual OCR retry while the first retry is processing', 
   expect(retrySignal?.aborted).toBe(false);
 
   retryResult.resolve({
+    outcome: 'deadline-exceeded',
     extraction: {},
     rawText: '',
     source: 'ocr',
@@ -1296,6 +1386,7 @@ it('prevents a duplicate manual OCR retry while the first retry is processing', 
 it('does not present OCR candidates supplied with a deadline result', async () => {
   const user = userEvent.setup();
   vi.mocked(extractFromImage).mockResolvedValueOnce({
+    outcome: 'deadline-exceeded',
     extraction: { brandName: ocrCandidate('WRONG OCR') },
     rawText: 'WRONG OCR',
     source: 'ocr',
@@ -1316,12 +1407,14 @@ it('keeps manual evidence editable when a deadline retry returns an ordinary OCR
   });
   vi.mocked(extractFromImage)
     .mockResolvedValueOnce({
+      outcome: 'deadline-exceeded',
       extraction: {},
       rawText: '',
       source: 'ocr',
       error: 'deadline-exceeded',
     })
     .mockResolvedValueOnce({
+      outcome: 'error',
       extraction: {},
       rawText: '',
       source: 'ocr',
@@ -1353,6 +1446,7 @@ it('keeps manual evidence editable when a deadline retry rejects', async () => {
   });
   vi.mocked(extractFromImage)
     .mockResolvedValueOnce({
+      outcome: 'deadline-exceeded',
       extraction: {},
       rawText: '',
       source: 'ocr',
@@ -1381,12 +1475,14 @@ it('keeps human value, deliberate blank, and visual flags when retry OCR fills a
   const user = userEvent.setup();
   vi.mocked(extractFromImage)
     .mockResolvedValueOnce({
+      outcome: 'deadline-exceeded',
       extraction: {},
       rawText: '',
       source: 'ocr',
       error: 'deadline-exceeded',
     })
     .mockResolvedValueOnce({
+      outcome: 'completed',
       extraction: {
         brandName: ocrCandidate('OCR BRAND'),
         proof: ocrCandidate('90 Proof'),
@@ -1467,6 +1563,7 @@ it('keeps warning typography and legibility confirmations as separate reviewer c
     value: vi.fn(),
   });
   vi.mocked(extractFromImage).mockResolvedValueOnce({
+    outcome: 'completed',
     extraction: {},
     rawText: '',
     source: 'ocr',
@@ -1514,6 +1611,7 @@ it('runs an in-memory same-origin sample benchmark with honest run labels and ti
   vi.stubGlobal('fetch', fetchSample);
   vi.mocked(extractFromImage)
     .mockResolvedValueOnce({
+      outcome: 'completed',
       extraction: { brandName: ocrCandidate('Old Tom') },
       rawText: 'OLD TOM',
       source: 'ocr',
@@ -1526,6 +1624,7 @@ it('runs an in-memory same-origin sample benchmark with honest run labels and ti
       },
     })
     .mockResolvedValueOnce({
+      outcome: 'error',
       extraction: {},
       rawText: '',
       source: 'ocr',
@@ -1628,7 +1727,13 @@ it('cancels a pending benchmark OCR and ignores its cancelled result after navig
     extractionSignal = options?.signal;
     return new Promise<ExtractionJobResult>((resolve) => {
       options?.signal?.addEventListener('abort', () => {
-        resolve({ extraction: {}, rawText: '', source: 'ocr', error: 'cancelled' });
+        resolve({
+          outcome: 'cancelled',
+          extraction: {},
+          rawText: '',
+          source: 'ocr',
+          error: 'cancelled',
+        });
       }, { once: true });
     });
   });
@@ -1660,6 +1765,7 @@ it('keeps the benchmark runnable after Strict Mode replays its lifecycle cleanup
   });
   vi.stubGlobal('fetch', fetchSample);
   vi.mocked(extractFromImage).mockResolvedValue({
+    outcome: 'completed',
     extraction: {},
     rawText: '',
     source: 'ocr',
@@ -1701,6 +1807,7 @@ it('preserves fixture evidence when an agent corrects an extracted candidate', a
 it('lets an agent add a missing imported-origin candidate without fabricating raw OCR evidence', async () => {
   const user = userEvent.setup();
   vi.mocked(extractFromImage).mockResolvedValueOnce({
+    outcome: 'completed',
     extraction: {
       brandName: ocrCandidate('Old Tom'),
       classType: ocrCandidate('Bourbon Whiskey'),
@@ -1755,6 +1862,7 @@ it('lets an agent add a missing imported-origin candidate without fabricating ra
 it('treats an agent correction of a low-confidence candidate as human-verified', async () => {
   const user = userEvent.setup();
   vi.mocked(extractFromImage).mockResolvedValueOnce({
+    outcome: 'completed',
     extraction: {
       abv: { value: '43%', rawText: '43% Alc./Vol.', confidence: 0.7, source: 'ocr' },
     },
@@ -1787,6 +1895,7 @@ it('treats an agent correction of a low-confidence candidate as human-verified',
 it('reports the measured local extraction time for a real review', async () => {
   const user = userEvent.setup();
   vi.mocked(extractFromImage).mockResolvedValueOnce({
+    outcome: 'completed',
     extraction: {},
     rawText: 'OLD TOM',
     source: 'ocr',
@@ -1896,6 +2005,7 @@ it('explains unsupported application number formats before extraction begins', a
   await user.clear(abv);
   await user.type(abv, '45%');
   vi.mocked(extractFromImage).mockResolvedValueOnce({
+    outcome: 'completed',
     extraction: {},
     rawText: 'OLD TOM',
     source: 'ocr',
@@ -1949,6 +2059,7 @@ it('keeps the reviewer informed when OCR rejects unexpectedly', async () => {
 it('routes a resolved unreadable OCR result to choose-another-label recovery', async () => {
   const user = userEvent.setup();
   vi.mocked(extractFromImage).mockResolvedValueOnce({
+    outcome: 'error',
     extraction: {},
     rawText: '',
     source: 'ocr',
@@ -1989,7 +2100,12 @@ it('shows only progress while OCR is still processing', async () => {
     }),
   ).not.toBeInTheDocument();
 
-  pending.resolve({ extraction: {}, rawText: 'OLD TOM', source: 'ocr' });
+  pending.resolve({
+    outcome: 'completed',
+    extraction: {},
+    rawText: 'OLD TOM',
+    source: 'ocr',
+  });
   expect(await screen.findByRole('table')).toBeInTheDocument();
 });
 
@@ -2140,7 +2256,12 @@ it('announces OCR progress while the evidence workspace is loading', async () =>
   expect(progress).toHaveTextContent(/reading label evidence… 42%/i);
   expect(screen.getByText(/preparing comparison workspace/i)).toBeInTheDocument();
 
-  pending.resolve({ extraction: {}, rawText: 'OLD TOM', source: 'ocr' });
+  pending.resolve({
+    outcome: 'completed',
+    extraction: {},
+    rawText: 'OLD TOM',
+    source: 'ocr',
+  });
   expect(await screen.findByRole('table')).toBeInTheDocument();
 });
 

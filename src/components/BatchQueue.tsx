@@ -358,7 +358,7 @@ function BatchFullReview({
         hasVisualEvidence,
       })
     : undefined;
-  const deadlineDisclosure = item.isManualEvidence && item.status === 'manual_review_required'
+  const manualRecoveryDisclosure = item.isManualEvidence && item.status === 'manual_review_required'
     ? item.error
     : undefined;
   const retryError = item.isManualEvidence && item.status === 'error'
@@ -378,12 +378,12 @@ function BatchFullReview({
         phase="ready"
         rawText={item.rawText ?? ''}
         imageUrl={imageUrl}
-        disclosure={deadlineDisclosure}
+        disclosure={manualRecoveryDisclosure}
         error={retryError}
         durationMs={durationMs}
         isGuidedDemo={false}
         shouldFocusReviewHeading
-        shouldFocusManualDisclosure={false}
+        shouldFocusManualDisclosure={Boolean(manualRecoveryDisclosure)}
         manualEvidence={Boolean(item.isManualEvidence)}
         onRetryOcr={() => {
           onRetry(item.id);
