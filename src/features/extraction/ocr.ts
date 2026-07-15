@@ -1,5 +1,6 @@
 import Tesseract from 'tesseract.js';
 import { createCandidateConfidenceResolver } from './confidence';
+import { classifyImageReadiness } from './imageReadiness';
 import { extractFromText } from './parser';
 import type {
   ExtractFromImage,
@@ -8,8 +9,6 @@ import type {
   ProgressListener,
 } from './types';
 
-const ACCEPTED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const MAX_IMAGE_EDGE = 2_000;
 const MAX_CONCURRENT_WORKERS = 2;
 const LOCAL_OCR_PATH = '/ocr/';
@@ -133,12 +132,9 @@ const imageSourceFor = async (
 };
 
 export const prepareImage = async (file: File): Promise<PreparedImage> => {
-  if (!ACCEPTED_IMAGE_TYPES.has(file.type)) {
-    throw new ImageInputError('Upload a JPEG, PNG, or WebP image.');
-  }
-
-  if (file.size > MAX_IMAGE_BYTES) {
-    throw new ImageInputError('Images must be 10 MB or smaller.');
+  const { blockingError } = classifyImageReadiness(file);
+  if (blockingError) {
+    throw new ImageInputError(blockingError);
   }
 
   const source = await imageSourceFor(file);

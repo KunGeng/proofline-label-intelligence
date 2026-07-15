@@ -848,6 +848,24 @@ input:not([type="checkbox"]):not([type="file"])[aria-invalid="true"] {
   font-size: 0.8rem;
 }
 
+.image-readiness-advisory {
+  max-width: 52ch;
+  padding: 10px 12px;
+  margin: 12px 0 0 !important;
+  color: #704308;
+  font-size: 0.78rem;
+  font-weight: 650;
+  line-height: 1.45;
+  text-align: left;
+  background: var(--amber-soft);
+  border-left: 3px solid var(--amber);
+}
+
+.image-readiness-advisory--batch {
+  width: 100%;
+  max-width: 44ch;
+}
+
 .intake-form__actions {
   display: flex;
   justify-content: flex-end;

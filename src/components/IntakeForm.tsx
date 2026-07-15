@@ -13,10 +13,15 @@ import {
   getBeverageProfile,
   type BeverageType,
 } from '../domain/beverageProfiles';
+import {
+  ACCEPTED_IMAGE_ACCEPT,
+  MIN_RECOMMENDED_LONGEST_EDGE,
+  RETAKE_GUIDANCE,
+  classifyImageReadiness,
+  inspectImageReadiness,
+  type ImageReadiness,
+} from '../features/extraction/imageReadiness';
 import { ScopeNotice, SectionCard } from './ui';
-
-const ACCEPTED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
 const applicationFieldDefinitions = [
   ['brandName', 'Brand name'],
@@ -61,13 +66,14 @@ interface IntakeFormProps {
   onSubmit: (application: ApplicationData, file: File) => void | Promise<void>;
 }
 
-const validateImage = (file: File): string | undefined => {
-  if (!ACCEPTED_IMAGE_TYPES.has(file.type)) {
-    return 'Upload a JPEG, PNG, or WebP image.';
+const readinessAdvisoryText = (readiness: ImageReadiness): string | undefined => {
+  if (readiness.advisory === 'insufficient-pixels' && readiness.dimensions) {
+    const { width, height } = readiness.dimensions;
+    return `This ${width} × ${height} px image is below the recommended ${MIN_RECOMMENDED_LONGEST_EDGE} px longest edge. ${RETAKE_GUIDANCE}`;
   }
 
-  if (file.size > MAX_IMAGE_BYTES) {
-    return 'Images must be 10 MB or smaller.';
+  if (readiness.advisory === 'decode-failed') {
+    return `We could not read this image's dimensions locally. ${RETAKE_GUIDANCE}`;
   }
 
   return undefined;
@@ -77,12 +83,14 @@ export function IntakeForm({ onCancel, onSubmit }: IntakeFormProps) {
   const [application, setApplication] = useState<ApplicationData>(emptyApplication);
   const [file, setFile] = useState<File>();
   const [fileError, setFileError] = useState<string>();
+  const [fileReadiness, setFileReadiness] = useState<ImageReadiness>();
   const [invalidFields, setInvalidFields] = useState<RequiredFieldKey[]>([]);
   const [formatErrors, setFormatErrors] = useState<string[]>([]);
   const [focusRequest, setFocusRequest] = useState(0);
   const [dragging, setDragging] = useState(false);
   const fieldRefs = useRef<Partial<Record<RequiredFieldKey, HTMLInputElement | null>>>({});
   const focusAfterSubmit = useRef(false);
+  const imageReadinessRequestRef = useRef(0);
   const beverageProfile = getBeverageProfile(application.beverageType);
   const requiredApplicationFields = applicationFieldDefinitions.filter(
     ([field]) =>
@@ -110,6 +118,13 @@ export function IntakeForm({ onCancel, onSubmit }: IntakeFormProps) {
     fieldRefs.current[firstInvalidField]?.focus();
     focusAfterSubmit.current = false;
   }, [firstInvalidField, focusRequest]);
+
+  useEffect(
+    () => () => {
+      imageReadinessRequestRef.current += 1;
+    },
+    [],
+  );
 
   const reportInvalidFields = (fields: RequiredFieldKey[]): void => {
     focusAfterSubmit.current = true;
@@ -139,16 +154,32 @@ export function IntakeForm({ onCancel, onSubmit }: IntakeFormProps) {
   };
 
   const chooseFile = (candidate: File | undefined): void => {
+    const request = imageReadinessRequestRef.current + 1;
+    imageReadinessRequestRef.current = request;
+    setFileReadiness(undefined);
+
     if (!candidate) {
       return;
     }
 
-    const error = validateImage(candidate);
+    const { blockingError: error } = classifyImageReadiness(candidate);
     setFileError(error);
     setFile(error ? undefined : candidate);
     setInvalidFields((current) =>
       current.filter((invalidField) => invalidField !== 'labelImage'),
     );
+
+    if (error) {
+      return;
+    }
+
+    void inspectImageReadiness(candidate).then((readiness) => {
+      if (imageReadinessRequestRef.current !== request) {
+        return;
+      }
+
+      setFileReadiness(readiness);
+    });
   };
 
   const onFileChange = (event: ChangeEvent<HTMLInputElement>): void => {
@@ -450,14 +481,25 @@ export function IntakeForm({ onCancel, onSubmit }: IntakeFormProps) {
                   fieldRefs.current.labelImage = element;
                 }}
                 type="file"
-                accept="image/jpeg,image/png,image/webp"
+                accept={ACCEPTED_IMAGE_ACCEPT}
                 onChange={onFileChange}
                 required
-                aria-describedby={fileError ? 'file-error' : undefined}
+                aria-describedby={
+                  fileError
+                    ? 'file-error'
+                    : fileReadiness?.advisory
+                      ? 'file-readiness-advisory'
+                      : undefined
+                }
                 aria-invalid={fileError ? true : invalidFields.includes('labelImage') || undefined}
               />
             </label>
             {file ? <p className="selected-file">Ready: <strong>{file.name}</strong></p> : null}
+            {fileReadiness?.advisory ? (
+              <p className="image-readiness-advisory" id="file-readiness-advisory" role="status">
+                {readinessAdvisoryText(fileReadiness)}
+              </p>
+            ) : null}
             <p className="muted">
               No label handy?{' '}
               <a href="/demo/old-tom-bourbon.jpg" download>

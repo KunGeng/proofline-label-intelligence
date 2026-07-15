@@ -16,6 +16,13 @@ import type {
   ReviewState,
 } from '../domain/types';
 import { extractFromImage } from '../features/extraction/ocr';
+import {
+  ACCEPTED_IMAGE_ACCEPT,
+  RETAKE_GUIDANCE,
+  imageInputErrorFor,
+  inspectImageReadiness,
+  type ImageReadiness,
+} from '../features/extraction/imageReadiness';
 import { parseBatchCsv } from '../features/intake/csv';
 import { downloadCsv } from '../features/intake/export';
 import {
@@ -41,8 +48,6 @@ import { ReviewDesk, type CandidateField } from './ReviewDesk';
 
 const MAX_BATCH_FILES = 300;
 const BATCH_WORKER_COUNT = 2;
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
-const ACCEPTED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
 type QueueFilter =
   | 'all'
@@ -140,18 +145,6 @@ const readCsvFile = async (file: File): Promise<string> => {
     reader.onload = () => resolve(String(reader.result ?? ''));
     reader.readAsText(file);
   });
-};
-
-const isValidImage = (file: File): string | undefined => {
-  if (!ACCEPTED_IMAGE_TYPES.has(file.type)) {
-    return `${file.name}: choose a JPEG, PNG, or WebP image.`;
-  }
-
-  if (file.size > MAX_IMAGE_BYTES) {
-    return `${file.name}: images must be 10 MB or smaller.`;
-  }
-
-  return undefined;
 };
 
 const errorDescriptionIdFor = (item: QueueItem): string => `batch-row-error-${item.id}`;
@@ -426,6 +419,7 @@ function BatchFullReview({
 
 export function BatchQueue({ initialItems }: BatchQueueProps) {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [selectedFileReadiness, setSelectedFileReadiness] = useState<ImageReadiness[]>([]);
   const [csvPresent, setCsvPresent] = useState(false);
   const [csvLoading, setCsvLoading] = useState(false);
   const [csvText, setCsvText] = useState<string>();
@@ -440,6 +434,7 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
   const [returnFocusTarget, setReturnFocusTarget] = useState<ReturnFocusTarget>();
   const [isProcessing, setIsProcessing] = useState(false);
   const selectedFilesRef = useRef<File[]>([]);
+  const imageReadinessRequestRef = useRef(0);
   const activeGenerationRef = useRef<QueueGeneration | undefined>(undefined);
   const csvRequestRef = useRef(0);
   const mountedRef = useRef(true);
@@ -516,7 +511,9 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
 
   useEffect(() => {
     mountedRef.current = true;
+    imageReadinessRequestRef.current += 1;
     setItems(initialItems ? [...initialItems] : []);
+    setSelectedFileReadiness([]);
     setExpandedEvidenceId(undefined);
     setFullReviewItemId(undefined);
     setReturnFocusTarget(undefined);
@@ -524,6 +521,7 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
     return () => {
       mountedRef.current = false;
       csvRequestRef.current += 1;
+      imageReadinessRequestRef.current += 1;
       retireActiveGeneration();
     };
   }, [initialItems, retireActiveGeneration]);
@@ -560,13 +558,15 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
     const received = Array.from(event.target.files ?? []);
     const errors: string[] = [];
     const candidates = received.slice(0, MAX_BATCH_FILES);
+    const inspectionRequest = imageReadinessRequestRef.current + 1;
+    imageReadinessRequestRef.current = inspectionRequest;
 
     if (received.length > MAX_BATCH_FILES) {
       errors.push(`Choose up to ${MAX_BATCH_FILES} label images at a time. Only the first ${MAX_BATCH_FILES} were added.`);
     }
 
     const validFiles = candidates.flatMap((file) => {
-      const error = isValidImage(file);
+      const error = imageInputErrorFor(file, 'batch');
       if (error) {
         errors.push(error);
         return [];
@@ -577,11 +577,23 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
 
     setSelectedFiles(validFiles);
     selectedFilesRef.current = validFiles;
+    setSelectedFileReadiness([]);
     setFileErrors(errors);
     if (csvPresent && !csvLoading && csvText !== undefined) {
       validateCsv(csvText, validFiles);
     }
     event.target.value = '';
+
+    void Promise.all(validFiles.map((file) => inspectImageReadiness(file))).then((readiness) => {
+      if (
+        imageReadinessRequestRef.current !== inspectionRequest ||
+        !mountedRef.current
+      ) {
+        return;
+      }
+
+      setSelectedFileReadiness(readiness);
+    });
   };
 
   const chooseCsv = async (event: ChangeEvent<HTMLInputElement>): Promise<void> => {
@@ -772,10 +784,12 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
   const clearBatch = (): void => {
     retireActiveGeneration();
     csvRequestRef.current += 1;
+    imageReadinessRequestRef.current += 1;
     selectedFilesRef.current = [];
     setIsProcessing(false);
     setItems([]);
     setSelectedFiles([]);
+    setSelectedFileReadiness([]);
     setCsvPresent(false);
     setCsvLoading(false);
     setCsvText(undefined);
@@ -815,6 +829,9 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
   const manualReviewCount = items.filter((item) => item.status === 'manual_review_required').length;
   const hasQueue = items.length > 0;
   const hasBatchData = hasQueue || selectedFiles.length > 0 || csvPresent;
+  const retakeAdvisoryCount = selectedFileReadiness.filter(
+    ({ advisory }) => advisory !== undefined,
+  ).length;
   const measuredDurations = items
     .map((item) => item.durationMs)
     .filter((duration): duration is number => duration !== undefined);
@@ -886,10 +903,16 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
               Choose label images
               <input
                 type="file"
-                accept="image/jpeg,image/png,image/webp"
+                accept={ACCEPTED_IMAGE_ACCEPT}
                 multiple
                 onChange={chooseImages}
-                aria-describedby={fileErrors.length > 0 ? 'batch-file-errors' : undefined}
+                aria-describedby={
+                  fileErrors.length > 0
+                    ? 'batch-file-errors'
+                    : retakeAdvisoryCount > 0
+                      ? 'batch-image-readiness-advisory'
+                      : undefined
+                }
                 aria-invalid={fileErrors.length > 0 ? true : undefined}
               />
             </label>
@@ -897,6 +920,17 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
               <p className="selected-file" aria-live="polite">
                 <strong>{selectedFiles.length}</strong>{' '}
                 {selectedFiles.length === 1 ? 'label image is ready.' : 'label images are ready.'}
+              </p>
+            ) : null}
+            {retakeAdvisoryCount > 0 ? (
+              <p
+                className="image-readiness-advisory image-readiness-advisory--batch"
+                id="batch-image-readiness-advisory"
+                role="status"
+              >
+                <strong>{retakeAdvisoryCount}</strong>{' '}
+                {retakeAdvisoryCount === 1 ? 'selected label image may' : 'selected label images may'}
+                {' '}benefit from a retake. {RETAKE_GUIDANCE}
               </p>
             ) : null}
           </div>

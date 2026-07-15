@@ -2037,6 +2037,84 @@ it('explains unsupported files without losing the current form values', async ()
   expect(imageInput).toHaveAttribute('aria-invalid', 'true');
 });
 
+it('advises a single small image retake without disabling evidence review', async () => {
+  const user = userEvent.setup();
+  vi.stubGlobal('createImageBitmap', vi.fn().mockResolvedValue({
+    width: 640,
+    height: 480,
+    close: vi.fn(),
+  }));
+
+  const submit = await fillManualReviewForm(user);
+
+  expect(await screen.findByText(
+    /a straight-on, evenly lit, glare-free retake may improve ocr/i,
+  )).toBeInTheDocument();
+  expect(submit).toBeEnabled();
+  expect(screen.getByLabelText(/^choose label image$/i)).not.toHaveAttribute(
+    'aria-invalid',
+    'true',
+  );
+});
+
+it('does not let a stale single image inspection replace the newer selection', async () => {
+  const user = userEvent.setup();
+  const firstInspection = deferred<{ width: number; height: number; close: () => void }>();
+  vi.stubGlobal('createImageBitmap', vi.fn((file: File) =>
+    file.name === 'first.png'
+      ? firstInspection.promise
+      : Promise.resolve({ width: 1_200, height: 800, close: vi.fn() }),
+  ));
+
+  render(<App />);
+  await user.click(screen.getByRole('button', { name: /review a label/i }));
+  const imageInput = screen.getByLabelText(/^choose label image$/i);
+  await user.upload(imageInput, new File(['first'], 'first.png', { type: 'image/png' }));
+  await user.upload(imageInput, new File(['second'], 'second.png', { type: 'image/png' }));
+
+  expect(await screen.findByText(/second\.png/i)).toBeInTheDocument();
+  firstInspection.resolve({ width: 640, height: 480, close: vi.fn() });
+  await act(async () => {
+    await Promise.resolve();
+  });
+
+  expect(screen.queryByText(
+    /a straight-on, evenly lit, glare-free retake may improve ocr/i,
+  )).not.toBeInTheDocument();
+});
+
+it('counts valid small batch images needing a retake without rejecting the batch', async () => {
+  const user = userEvent.setup();
+  vi.stubGlobal('createImageBitmap', vi.fn((file: File) =>
+    Promise.resolve(
+      file.name === 'small.png'
+        ? { width: 640, height: 480, close: vi.fn() }
+        : { width: 1_200, height: 800, close: vi.fn() },
+    ),
+  ));
+
+  render(<App />);
+  await user.click(screen.getByRole('button', { name: /review a batch/i }));
+  await user.upload(
+    screen.getByLabelText(/^choose label images$/i),
+    [
+      new File(['small'], 'small.png', { type: 'image/png' }),
+      new File(['ready'], 'ready.png', { type: 'image/png' }),
+    ],
+  );
+
+  await waitFor(() => {
+    expect(screen.getAllByRole('status').some((status) =>
+      /1 selected label image may benefit from a retake/i.test(status.textContent ?? ''),
+    )).toBe(true);
+  });
+  expect(screen.getByText(/label images are ready/i)).toHaveTextContent(
+    '2 label images are ready.',
+  );
+  expect(screen.getByRole('button', { name: /begin batch review/i })).toBeEnabled();
+  expect(screen.queryByText(/image selection needs attention/i)).not.toBeInTheDocument();
+});
+
 it('keeps the primary review area keyboard reachable', async () => {
   const user = userEvent.setup();
   render(<App />);
