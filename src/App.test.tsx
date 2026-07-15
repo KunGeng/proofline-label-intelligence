@@ -1256,13 +1256,24 @@ it('retries a failed batch extraction with the original image', async () => {
   expect(extractFromImage).toHaveBeenCalledTimes(2);
 });
 
-it('keeps a replacement batch processing when a cleared extraction settles late', async () => {
+it('aborts a cleared extraction before releasing idle OCR workers and keeps replacement work active', async () => {
   const user = userEvent.setup();
   const oldExtraction = deferred<ExtractionJobResult>();
   const newExtraction = deferred<ExtractionJobResult>();
-  vi.mocked(extractFromImage).mockImplementation((file) =>
-    file.name === 'old.png' ? oldExtraction.promise : newExtraction.promise,
-  );
+  let oldSignal: AbortSignal | undefined;
+  vi.mocked(releaseOcrWorkers).mockClear();
+  vi.mocked(releaseOcrWorkers).mockImplementation(() => {
+    expect(oldSignal?.aborted).toBe(true);
+    return Promise.resolve();
+  });
+  vi.mocked(extractFromImage).mockImplementation((file, _onProgress, options) => {
+    if (file.name === 'old.png') {
+      oldSignal = options?.signal;
+      return oldExtraction.promise;
+    }
+
+    return newExtraction.promise;
+  });
 
   render(<App />);
   await user.click(screen.getByRole('button', { name: /review a batch/i }));
@@ -1271,7 +1282,11 @@ it('keeps a replacement batch processing when a cleared extraction settles late'
   await user.click(screen.getByRole('button', { name: /begin batch review/i }));
 
   expect(screen.getByRole('button', { name: /batch review in progress/i })).toBeDisabled();
+  await waitFor(() => {
+    expect(oldSignal).toBeDefined();
+  });
   await user.click(screen.getByRole('button', { name: /clear this batch/i }));
+  expect(releaseOcrWorkers).toHaveBeenCalledTimes(1);
 
   await user.upload(imageInput, new File(['new'], 'new.png', { type: 'image/png' }));
   await user.click(screen.getByRole('button', { name: /begin batch review/i }));
@@ -1751,6 +1766,22 @@ it('prewarms OCR only after a reviewer enters a single or batch intake', async (
   await waitFor(() => {
     expect(prewarmOcr).toHaveBeenCalledTimes(2);
   });
+});
+
+it('releases idle OCR workers when leaving a single-label review', async () => {
+  const user = userEvent.setup();
+  vi.mocked(releaseOcrWorkers).mockClear();
+  vi.mocked(extractFromImage).mockResolvedValueOnce({
+    outcome: 'completed',
+    extraction: {},
+    rawText: 'OLD TOM',
+    source: 'ocr',
+  });
+
+  await startManualReview(user);
+  await user.click(await screen.findByRole('button', { name: /review another label/i }));
+
+  expect(releaseOcrWorkers).toHaveBeenCalledTimes(1);
 });
 
 it('keeps uppercase, bold, and legibility confirmations independently controlled with an image preview', async () => {
