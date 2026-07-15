@@ -102,6 +102,38 @@ describe('OCR engine facade', () => {
     expect(terminate).not.toHaveBeenCalled();
   });
 
+  it('releases a completed idle worker and uses a fresh worker afterward', async () => {
+    const firstTerminate = vi.fn().mockResolvedValue(undefined);
+    const secondTerminate = vi.fn().mockResolvedValue(undefined);
+    const firstWorker = {
+      recognize: vi.fn().mockResolvedValue({
+        data: { text: 'OLD TOM 45%', confidence: 99, words: [], lines: [] },
+      }),
+      terminate: firstTerminate,
+    } as unknown as OcrWorker;
+    const secondWorker = {
+      recognize: vi.fn().mockResolvedValue({
+        data: { text: 'OLD TOM 45%', confidence: 99, words: [], lines: [] },
+      }),
+      terminate: secondTerminate,
+    } as unknown as OcrWorker;
+    const factory = vi
+      .fn()
+      .mockResolvedValueOnce(firstWorker)
+      .mockResolvedValueOnce(secondWorker);
+    const engine = createOcrEngine({
+      createWorker: factory as unknown as WorkerFactory,
+      prepareImage: preparedImage,
+    });
+
+    await engine.extract(file(), vi.fn());
+    await engine.releaseIdleWorkers();
+    await engine.extract(file(), vi.fn());
+
+    expect(firstTerminate).toHaveBeenCalledTimes(1);
+    expect(factory).toHaveBeenCalledTimes(2);
+  });
+
   it('uses word confidence instead of page confidence and requests only needed outputs', async () => {
     const image = document.createElement('canvas');
     const recognize = vi.fn().mockResolvedValue({

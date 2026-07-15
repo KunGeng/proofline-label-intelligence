@@ -763,6 +763,30 @@ describe('createReviewQueue', () => {
     expect(queue.items).toEqual([]);
   });
 
+  it('aborts an active extractor when the queue is cleared', async () => {
+    const started = deferred<void>();
+    const completion = deferred<ReturnType<typeof successfulResult>>();
+    let signal: AbortSignal | undefined;
+    const queue = createReviewQueue(
+      [{ id: 'clear', file: file('clear.png') }],
+      async (_job, _report, workerSignal) => {
+        signal = workerSignal;
+        started.resolve();
+        return completion.promise;
+      },
+      1,
+    );
+
+    const queueRun = queue.start();
+    await started.promise;
+    queue.clear();
+    const wasAborted = signal?.aborted;
+    completion.resolve(successfulResult());
+    await queueRun;
+
+    expect(wasAborted).toBe(true);
+  });
+
   it('cancels a job waiting for the shared semaphore when cleared', async () => {
     const releaseHolders = deferred<void>();
     const holdersStarted = deferred<void>();

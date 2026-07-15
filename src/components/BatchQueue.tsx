@@ -15,7 +15,7 @@ import type {
   ReviewFlags,
   ReviewState,
 } from '../domain/types';
-import { extractFromImage } from '../features/extraction/ocr';
+import { extractFromImage, releaseOcrWorkers } from '../features/extraction/ocr';
 import {
   ACCEPTED_IMAGE_ACCEPT,
   RETAKE_GUIDANCE,
@@ -478,6 +478,7 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
     }
 
     generation.queue.clear();
+    void releaseOcrWorkers();
     stopRefreshLoop(generation);
     activeGenerationRef.current = undefined;
   }, [stopRefreshLoop]);

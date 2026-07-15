@@ -72,6 +72,7 @@ export interface QueueItem {
 export type QueueWorker = (
   job: QueueJob,
   report: (progress: number, status: QueueStatus) => void,
+  signal?: AbortSignal,
 ) => Promise<ExtractionJobResult>;
 
 export interface ReviewQueue {
@@ -248,8 +249,8 @@ const manualRecoveryDisclosureFor = (output: ExtractionJobResult): string =>
 
 export const queueWorkerFromExtractor = (
   extract: ExtractFromImage,
-): QueueWorker => async (job, report) =>
-  extract(job.file, ({ phase, value }) => report(value, phase));
+): QueueWorker => async (job, report, signal) =>
+  extract(job.file, ({ phase, value }) => report(value, phase), { signal });
 
 export const createReviewQueue = (
   jobs: QueueJob[],
@@ -278,6 +279,7 @@ export const createReviewQueue = (
   const scheduled = new Map<QueueItem, Promise<void>>();
   const activeTokens = new Map<QueueItem, number>();
   const slotRequests = new Map<QueueItem, WorkerSlotRequest>();
+  const workerAbortControllers = new Map<QueueItem, AbortController>();
   let activeWorkers = 0;
   let nextToken = 0;
   let cleared = false;
@@ -309,6 +311,8 @@ export const createReviewQueue = (
 
     item.status = 'preparing';
     item.progress = 0;
+    const abortController = new AbortController();
+    workerAbortControllers.set(item, abortController);
     let workerSlotAcquired = false;
     let slotRequest: WorkerSlotRequest | undefined;
 
@@ -322,7 +326,7 @@ export const createReviewQueue = (
       }
 
       const startedAt = Date.now();
-      const output = await worker(job, report);
+      const output = await worker(job, report, abortController.signal);
       if (!isCurrent()) {
         releaseObjectUrl(output.thumbnailUrl);
         return;
@@ -377,6 +381,7 @@ export const createReviewQueue = (
       item.status = 'error';
       item.error = errorMessage(error);
     } finally {
+      workerAbortControllers.delete(item);
       slotRequests.delete(item);
       if (workerSlotAcquired) {
         releaseWorkerSlot();
@@ -461,6 +466,9 @@ export const createReviewQueue = (
     }
 
     cleared = true;
+    for (const controller of workerAbortControllers.values()) {
+      controller.abort();
+    }
     for (const request of slotRequests.values()) {
       request.cancel();
     }

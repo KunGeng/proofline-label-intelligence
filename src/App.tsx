@@ -10,7 +10,11 @@ import { ReviewDesk, type CandidateField } from './components/ReviewDesk';
 import { validateLabel } from './domain/validation';
 import type { ApplicationData, LabelExtraction, ReviewFlags } from './domain/types';
 import { demoCases } from './features/demo/cases';
-import { extractFromImage, prewarmOcr } from './features/extraction/ocr';
+import {
+  extractFromImage,
+  prewarmOcr,
+  releaseOcrWorkers,
+} from './features/extraction/ocr';
 import {
   isManualRecoveryOutcome,
   type DemoCaseId,
@@ -129,6 +133,8 @@ export function App({ initialBatchItems }: AppProps) {
     () => () => {
       extractionRun.current += 1;
       extractionAbort.current?.abort();
+      extractionAbort.current = undefined;
+      void releaseOcrWorkers();
     },
     [],
   );
@@ -147,7 +153,11 @@ export function App({ initialBatchItems }: AppProps) {
   };
 
   const resetTo = (nextView: Exclude<AppView, 'review'>): void => {
+    const isLeavingReview = view === 'review';
     cancelActiveExtraction();
+    if (isLeavingReview) {
+      void releaseOcrWorkers();
+    }
     setReview(undefined);
     resetVisualConfirmations();
     setView(nextView);

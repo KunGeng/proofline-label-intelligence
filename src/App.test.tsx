@@ -5,7 +5,11 @@ import { App } from './App';
 import { CANONICAL_WARNING_BODY, CANONICAL_WARNING_HEADING } from './domain/constants';
 import { validateLabel } from './domain/validation';
 import type { ApplicationData, Candidate, LabelExtraction, ReviewFlags } from './domain/types';
-import { extractFromImage, prewarmOcr } from './features/extraction/ocr';
+import {
+  extractFromImage,
+  prewarmOcr,
+  releaseOcrWorkers,
+} from './features/extraction/ocr';
 import type { ExtractionJobResult } from './features/extraction/types';
 import { serializeResults } from './features/intake/export';
 import type { QueueItem } from './features/intake/queue';
@@ -13,15 +17,18 @@ import type { QueueItem } from './features/intake/queue';
 vi.mock('./features/extraction/ocr', () => ({
   extractFromImage: vi.fn(),
   prewarmOcr: vi.fn(),
+  releaseOcrWorkers: vi.fn(),
 }));
 
 beforeEach(() => {
   vi.mocked(prewarmOcr).mockResolvedValue(undefined);
+  vi.mocked(releaseOcrWorkers).mockResolvedValue(undefined);
 });
 
 afterEach(() => {
   vi.mocked(extractFromImage).mockReset();
   vi.mocked(prewarmOcr).mockReset();
+  vi.mocked(releaseOcrWorkers).mockReset();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   vi.useRealTimers();

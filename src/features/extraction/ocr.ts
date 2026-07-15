@@ -437,6 +437,7 @@ const releaseAfterInitialization = (
 export interface OcrEngine {
   extract: ExtractFromImage;
   prewarm(): Promise<void>;
+  releaseIdleWorkers(): Promise<void>;
 }
 
 export const createOcrEngine = (
@@ -531,6 +532,11 @@ export const createOcrEngine = (
       warming = undefined;
     });
     return warming;
+  };
+
+  const releaseIdleWorkers = async (): Promise<void> => {
+    const workers = idleWorkers.splice(0);
+    await Promise.all(workers.map(retireWorker));
   };
 
   const extract: ExtractFromImage = async (file, onProgress, options) => {
@@ -743,7 +749,7 @@ export const createOcrEngine = (
     }
   };
 
-  return { extract, prewarm };
+  return { extract, prewarm, releaseIdleWorkers };
 };
 
 export const createExtractFromImage = (
@@ -753,3 +759,5 @@ export const createExtractFromImage = (
 const defaultEngine = createOcrEngine();
 export const extractFromImage = defaultEngine.extract;
 export const prewarmOcr = (): Promise<void> => defaultEngine.prewarm();
+export const releaseOcrWorkers = (): Promise<void> =>
+  defaultEngine.releaseIdleWorkers();
