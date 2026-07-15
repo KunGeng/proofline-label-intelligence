@@ -52,9 +52,17 @@ export type DemoCaseId =
   | 'mismatch'
   | 'foreign-origin'
   | 'warning-heading'
+  | 'non-bold-warning'
+  | 'beer'
+  | 'wine'
   | 'degraded';
 
-export type DemoFixtureVariant = 'foreign-origin' | 'warning-heading';
+export type DemoFixtureVariant =
+  | 'foreign-origin'
+  | 'warning-heading'
+  | 'non-bold-warning'
+  | 'beer'
+  | 'wine';
 
 export type DemoVisual =
   | { kind: 'image'; src: string; className?: string }

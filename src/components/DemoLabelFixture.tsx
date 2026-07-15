@@ -8,12 +8,17 @@ export function DemoLabelFixture({ variant }: { variant: DemoFixtureVariant }) {
     <figure className="demo-label-fixture" aria-label="Illustrative label fixture">
       <p className="demo-label-fixture__brand">{fixture.brandName}</p>
       <p>{fixture.classType}</p>
-      <p>{fixture.abv}</p>
+      {fixture.abv ? <p>{fixture.abv}</p> : null}
       <p>{fixture.netContents}</p>
       <p>{fixture.producerAddress}</p>
       {fixture.countryOfOrigin ? <p>{fixture.countryOfOrigin}</p> : null}
       <p>
-        <strong>{fixture.warningHeading}</strong> {fixture.warningBody}
+        {fixture.warningHeadingBold ? (
+          <strong>{fixture.warningHeading}</strong>
+        ) : (
+          <span>{fixture.warningHeading}</span>
+        )}{' '}
+        {fixture.warningBody}
       </p>
     </figure>
   );

@@ -224,6 +224,11 @@ it('offers a guided demo and a label-review entry point', () => {
   expect(
     screen.getByRole('button', { name: /review a label/i }),
   ).toBeInTheDocument();
+  expect(
+    screen.getByText(
+      'Brand, class, ABV and, for distilled spirits, proof. Volume, producer, origin, and statutory warning checks are explicit.',
+    ),
+  ).toBeInTheDocument();
 });
 
 it('submits a beer manual-review record without proof or declared ABV', async () => {
@@ -258,6 +263,12 @@ it('opens an explicit foreign-origin scenario with fixture evidence and a review
   expect(screen.getByRole('button', { name: /domestic declaration, foreign origin/i }))
     .toBeInTheDocument();
   expect(screen.getByRole('button', { name: /title-case warning heading/i }))
+    .toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /uppercase heading, bold pending/i }))
+    .toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /declared beer ABV/i }))
+    .toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /manual alcohol-content review/i }))
     .toBeInTheDocument();
   expect(screen.getByRole('button', { name: /low-confidence evidence/i }))
     .toBeInTheDocument();
@@ -331,6 +342,52 @@ it('opens the title-case warning fixture with the shown warning-heading mismatch
   expect(legibility).toBeChecked();
   expect(screen.getByRole('row', { name: /warning legibility/i })).toHaveTextContent('Match');
   expect(screen.getByRole('row', { name: /^warning heading\b/i })).toHaveTextContent('Mismatch');
+});
+
+it('opens disclosed beer and wine profile fixtures from the scenario library', async () => {
+  const user = userEvent.setup();
+  render(<App />);
+
+  await user.click(screen.getByRole('button', { name: /explore scenarios/i }));
+  await user.click(screen.getByRole('button', { name: /declared beer ABV/i }));
+
+  expect(screen.getByRole('heading', { name: /hop field \/ declared beer ABV/i }))
+    .toBeInTheDocument();
+  expect(screen.getByText(/precomputed illustrative beer fixture/i)).toBeInTheDocument();
+  expect(screen.getByRole('figure', { name: /illustrative label fixture/i }))
+    .toHaveTextContent('India Pale Ale');
+  expect(screen.getByRole('figure', { name: /illustrative label fixture/i }))
+    .toHaveTextContent('6.2% Alc./Vol.');
+  expect(screen.getAllByText('Fixture evidence').length).toBeGreaterThan(0);
+
+  await user.click(screen.getByRole('button', { name: /^overview$/i }));
+  await user.click(screen.getByRole('button', { name: /explore scenarios/i }));
+  await user.click(screen.getByRole('button', { name: /manual alcohol-content review/i }));
+
+  expect(screen.getByRole('heading', { name: /estate red \/ manual alcohol-content review/i }))
+    .toBeInTheDocument();
+  expect(screen.getByText(/precomputed illustrative wine fixture/i)).toBeInTheDocument();
+  expect(screen.getByRole('figure', { name: /illustrative label fixture/i }))
+    .toHaveTextContent('Cabernet Sauvignon');
+  expect(screen.getByText('Manual alcohol-content requirement review')).toBeInTheDocument();
+  expect(screen.queryByRole('row', { name: /^proof\b/i })).not.toBeInTheDocument();
+});
+
+it('keeps an uppercase non-bold warning heading as a pending bold confirmation', async () => {
+  const user = userEvent.setup();
+  render(<App />);
+
+  await user.click(screen.getByRole('button', { name: /explore scenarios/i }));
+  await user.click(screen.getByRole('button', { name: /uppercase heading, bold pending/i }));
+
+  const fixture = screen.getByRole('figure', { name: /illustrative label fixture/i });
+  expect(within(fixture).getByText('GOVERNMENT WARNING:', { selector: 'span' }))
+    .toBeInTheDocument();
+  expect(within(fixture).queryByText('GOVERNMENT WARNING:', { selector: 'strong' }))
+    .not.toBeInTheDocument();
+  expect(screen.getByRole('checkbox', { name: /government warning is bold/i }))
+    .not.toBeChecked();
+  expect(screen.getByRole('row', { name: /^warning bold\b/i })).toHaveTextContent('Needs review');
 });
 
 it('shows degraded Old Tom evidence as a low-confidence fixture without live OCR', async () => {

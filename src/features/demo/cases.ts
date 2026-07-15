@@ -16,11 +16,12 @@ a car or operate machinery, and may cause health problems.`;
 interface DemoLabelFixtureContent {
   brandName: string;
   classType: string;
-  abv: string;
+  abv?: string;
   netContents: string;
   producerAddress: string;
   countryOfOrigin?: string;
   warningHeading: string;
+  warningHeadingBold: boolean;
   warningBody: string;
 }
 
@@ -38,6 +39,7 @@ export const demoLabelFixtureContent: Record<
     producerAddress: 'Imported by Harbor Imports, Boston, MA',
     countryOfOrigin: 'Product of Scotland',
     warningHeading: 'GOVERNMENT WARNING:',
+    warningHeadingBold: true,
     warningBody: CANONICAL_WARNING_BODY,
   },
   'warning-heading': {
@@ -47,6 +49,36 @@ export const demoLabelFixtureContent: Record<
     netContents: '750 mL',
     producerAddress: 'Produced by North Coast Spirits, Portland, OR',
     warningHeading: 'Government Warning:',
+    warningHeadingBold: true,
+    warningBody: CANONICAL_WARNING_BODY,
+  },
+  'non-bold-warning': {
+    brandName: 'NORTH COAST SPIRITS',
+    classType: 'Single Malt Whisky',
+    abv: '46% Alc./Vol.',
+    netContents: '750 mL',
+    producerAddress: 'Produced by North Coast Spirits, Portland, OR',
+    warningHeading: 'GOVERNMENT WARNING:',
+    warningHeadingBold: false,
+    warningBody: CANONICAL_WARNING_BODY,
+  },
+  beer: {
+    brandName: 'HOP FIELD',
+    classType: 'India Pale Ale',
+    abv: '6.2% Alc./Vol.',
+    netContents: '355 mL',
+    producerAddress: 'Produced by Hop Field, OR',
+    warningHeading: 'GOVERNMENT WARNING:',
+    warningHeadingBold: true,
+    warningBody: CANONICAL_WARNING_BODY,
+  },
+  wine: {
+    brandName: 'ESTATE RED',
+    classType: 'Cabernet Sauvignon',
+    netContents: '750 mL',
+    producerAddress: 'Produced by Estate Winery, CA',
+    warningHeading: 'GOVERNMENT WARNING:',
+    warningHeadingBold: true,
     warningBody: CANONICAL_WARNING_BODY,
   },
 };
@@ -140,6 +172,59 @@ export const demoCases: DemoCase[] = [
     rawText: rawTextForFixture('warning-heading'),
     visual: { kind: 'fixture', variant: 'warning-heading' },
   }, 0.96),
+  withExtraction({
+    id: 'non-bold-warning',
+    title: 'Warning heading / uppercase non-bold evidence',
+    outcome: 'Uppercase heading, bold pending',
+    disclosure: 'Precomputed illustrative fixture — not a live OCR timing result.',
+    application: {
+      beverageType: 'distilled_spirits',
+      alcoholContentExpectation: 'declared',
+      brandName: 'NORTH COAST SPIRITS',
+      classType: 'Single Malt Whisky',
+      abv: '46%',
+      netContents: '750 mL',
+      producerAddress: 'North Coast Spirits, Portland, OR',
+      isImported: false,
+    },
+    rawText: rawTextForFixture('non-bold-warning'),
+    visual: { kind: 'fixture', variant: 'non-bold-warning' },
+  }, 0.96),
+  withExtraction({
+    id: 'beer',
+    title: 'Hop Field / declared beer ABV',
+    outcome: 'Declared beer ABV',
+    disclosure: 'Precomputed illustrative beer fixture — not a live OCR timing result.',
+    application: {
+      beverageType: 'beer',
+      alcoholContentExpectation: 'declared',
+      brandName: 'HOP FIELD',
+      classType: 'India Pale Ale',
+      abv: '6.2%',
+      netContents: '355 mL',
+      producerAddress: 'Hop Field, OR',
+      isImported: false,
+    },
+    rawText: rawTextForFixture('beer'),
+    visual: { kind: 'fixture', variant: 'beer' },
+  }, 0.99),
+  withExtraction({
+    id: 'wine',
+    title: 'Estate Red / manual alcohol-content review',
+    outcome: 'Manual alcohol-content review',
+    disclosure: 'Precomputed illustrative wine fixture — not a live OCR timing result.',
+    application: {
+      beverageType: 'wine',
+      alcoholContentExpectation: 'manual_review',
+      brandName: 'ESTATE RED',
+      classType: 'Cabernet Sauvignon',
+      netContents: '750 mL',
+      producerAddress: 'Estate Winery, CA',
+      isImported: false,
+    },
+    rawText: rawTextForFixture('wine'),
+    visual: { kind: 'fixture', variant: 'wine' },
+  }, 0.99),
   withExtraction({
     id: 'degraded',
     title: 'Old Tom Distillery / degraded evidence',

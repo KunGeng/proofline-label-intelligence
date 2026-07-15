@@ -107,7 +107,7 @@ export function Landing({
           <article>
             <span className="principles__number">01</span>
             <h3>Compare the facts</h3>
-            <p>Brand, class, ABV, proof, volume, producer, origin, and statutory warning checks are explicit.</p>
+            <p>Brand, class, ABV and, for distilled spirits, proof. Volume, producer, origin, and statutory warning checks are explicit.</p>
           </article>
           <article>
             <span className="principles__number">02</span>

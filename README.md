@@ -1,6 +1,6 @@
 # Proofline
 
-> A browser-first evidence-review prototype for U.S. distilled-spirit labels. It turns declared label facts and a label image into a conservative, agent-led review—not an automatic approval.
+> A browser-first evidence-review prototype for U.S. distilled spirits, beer, and wine labels. It turns declared label facts and a label image into a conservative, agent-led review—not an automatic approval.
 
 **Primary public deployment:** [main.d4qb8x5x7ay8t.amplifyapp.com](https://main.d4qb8x5x7ay8t.amplifyapp.com/)
 
@@ -14,11 +14,15 @@ Proofline gives a reviewer one place to compare an application against a label i
 
 - accepts a single label or a batch of JPEG, PNG, and WebP images (up to 10 MB each);
 - performs English OCR locally in the browser, parses candidate facts, and keeps the raw OCR evidence visible;
-- compares brand, class/type, ABV, optional proof, net contents, producer address, imported-product origin, and the federal government warning against the supplied application;
+- supports distilled spirits, beer, and wine as explicit profile selections; and
+- compares brand, class/type, ABV and, for distilled spirits, optional proof, net contents, producer address, imported-product origin, and the federal government warning against the supplied application;
 - shows a reviewable field-by-field outcome with source, confidence, and correction controls; and
 - preserves the original OCR after a correction and labels the revised candidate **Agent-entered**.
 
 The prototype deliberately never calls a result “approved.” A clean comparison reads: **“No discrepancies detected — agent approval required.”**
+
+Beer and wine profile support is limited to the documented common evidence workflow and
+manual-review choices. It does not claim complete product-specific legal rule coverage.
 
 Design rationale and trade-off discussion live in [docs/DESIGN.md](docs/DESIGN.md).
 
@@ -58,10 +62,10 @@ If OCR assets ever need to be refreshed after a dependency update, run `pnpm syn
 ## Guided demo
 
 1. Start the app and select **Open guided demo** on the overview screen.
-2. Review the seeded Old Tom Bourbon evidence. It is an illustrative fixture, clearly disclosed in the interface—not a live OCR or regulatory decision.
-3. Expand **View complete extracted text** to see the raw evidence, then inspect the field comparison.
+2. Review the seeded Old Tom Bourbon evidence, or open the Hop Field beer and Estate Red wine scenarios. Each is an illustrative precomputed fixture, clearly disclosed in the interface—not a live OCR or regulatory decision.
+3. Expand **View complete extracted text** to see the raw evidence, then inspect the field comparison. Use **Open full-size label evidence** for local evidence zoom, zoom out, and reset controls; these controls stay in the current browser session.
 4. Use a correction control only when the visible image supports it; the replacement becomes **Agent-entered** while the original raw OCR remains displayed.
-5. Complete the required visual typography confirmation after checking that the warning heading is uppercase and bold.
+5. Complete the independent uppercase, bold, and legibility attestations after inspecting the warning. The uppercase non-bold fixture deliberately leaves the bold attestation pending.
 
 For a real label, choose **New review**, supply the declared application facts, attach one supported image, and begin an evidence review.
 
@@ -72,14 +76,15 @@ Batch review accepts up to **300 selected images** and processes them through no
 Download the starter file: [public/batch-template.csv](public/batch-template.csv). Its one row matches the downloadable [sample label image](public/demo/old-tom-bourbon.jpg) by filename, so the template works as-is: select `old-tom-bourbon.jpg`, import the template, and begin the batch. Replace or extend the rows with your own image basenames for real work.
 
 ```csv
-filename,brandName,classType,abv,proof,netContents,producerAddress,isImported,countryOfOrigin
-old-tom-bourbon.jpg,OLD TOM DISTILLERY,Kentucky Straight Bourbon Whiskey,45%,90,750 mL,"Old Tom Distillery, Louisville, KY",false,
+filename,brandName,classType,beverage_type,alcohol_content_expectation,abv,proof,netContents,producerAddress,isImported,countryOfOrigin
+old-tom-bourbon.jpg,OLD TOM DISTILLERY,Kentucky Straight Bourbon Whiskey,distilled_spirits,declared,45%,90,750 mL,"Old Tom Distillery, Louisville, KY",false,
 ```
 
 CSV behavior is intentionally strict:
 
 - `filename` alone is valid for OCR triage; those items are marked **Application data required** rather than compared. Filename-only rows remain OCR triage.
-- If any application-data column is present, the complete application schema is required: `brandName`, `classType`, `abv`, `netContents`, `producerAddress`, and `isImported`. `proof` and `countryOfOrigin` remain conditional/optional as appropriate.
+- If any application-data column is present, the complete application schema is required: `brandName`, `classType`, `beverage_type`, `alcohol_content_expectation`, `netContents`, `producerAddress`, and `isImported`. `abv` is required only when `alcohol_content_expectation` is `declared`; `proof` is available only for `distilled_spirits`, and `countryOfOrigin` remains conditional for imported products.
+- `beverage_type` must be `distilled_spirits`, `beer`, or `wine`. `alcohol_content_expectation` must be `declared` or `manual_review`, subject to the selected profile.
 - `isImported` must be `true` or `false`; imported rows require `countryOfOrigin`.
 - ABV, proof, and net contents must parse as supported numeric formats. A malformed or partial CSV is rejected rather than silently downgraded.
 - Duplicate selected filenames or duplicate CSV rows are flagged because a safe one-to-one match cannot be inferred. Selected files without a CSV row stay in OCR triage.
@@ -106,7 +111,7 @@ This is a static React + TypeScript + Vite application. There is no application 
 - **Evidence model:** each parsed candidate carries the value, raw OCR text, confidence, and source. For live OCR, field confidence is derived from matched OCR words or lines; if no safe mapping exists, it conservatively falls below the readable threshold instead of inheriting a page-wide score. A reviewer correction replaces the candidate value, marks it **Agent-entered**, and treats it as human-verified; the original raw OCR text remains displayed as evidence.
 - **Validation engine:** a pure, tested TypeScript module makes conservative comparisons. The UI consumes its field results rather than embedding compliance logic in components.
 - **Batch intake:** a strict CSV parser pairs CSV rows to selected image basenames, while a cancellation-aware queue owns the batch lifecycle and avoids stale worker results after a batch is cleared.
-- **Review experience:** accessible controls expose evidence, field-level reasons, status precedence, correction workflows, retry states, and a manual typography confirmation.
+- **Review experience:** accessible controls expose evidence, local evidence zoom, field-level reasons, status precedence, correction workflows, retry states, and the visual typography confirmation: independent uppercase, bold, and legibility attestations.
 
 ## Performance
 
@@ -126,6 +131,15 @@ The local benchmark explicitly disables the five-second OCR deadline. It does so
 ensure its first and warm-worker timings remain an honest measurement of the current
 device. The deadline is an automated-wait target under normal responsive browser
 scheduling, not an absolute real-time guarantee while a browser event loop is blocked.
+
+**Browser-local photo-readiness advisory:** before OCR, the browser checks accepted
+image dimensions locally. An image below the recommended 1,000 px longest edge, or one
+whose dimensions cannot be read, remains usable but receives non-blocking guidance that
+a straight-on, evenly lit, glare-free retake may improve OCR. This advisory does not detect or prove glare, or guarantee that the next extraction will be ready, fast, or successful.
+
+When there is **no usable OCR evidence**, Proofline keeps the original label and
+application facts available, opens manual evidence entry, and offers an explicit retry.
+That recovery path is not a successful extraction and does not auto-complete a review.
 
 - **Intent-triggered worker readiness.** A single worker may be warmed after intake intent;
   the second worker is demand-created for batch work. Labels are downscaled to a
@@ -158,12 +172,11 @@ The federal warning is handled specially:
 
 - the body is compared with the exact canonical statement after whitespace normalization;
 - the heading must be the literal uppercase `GOVERNMENT WARNING:`;
-- OCR cannot establish layout, capitalization rendering, or bold weight reliably, so
-  **visual typography confirmation** is always an explicit agent task;
+- uppercase, bold, and legibility are independent human attestations; OCR text and uppercase casing never satisfy the bold attestation, and Proofline never auto-passes boldness;
 - Warning legibility is a manual reviewer confirmation. The reviewer inspects legibility,
   contrast, and placement rather than treating OCR as proof of a physical-label property;
-- Exact printed type size remains a final regulatory review responsibility. Either
-  confirmation is evidence for an agent review, not an approval or final decision.
+- Exact printed type size remains a final regulatory review responsibility. Every
+  attestation is evidence for an agent review, not an approval or final decision.
 
 Canonical source links:
 
@@ -187,9 +200,9 @@ For a production deployment, review the hosting provider’s own request logging
 
 ## Limitations
 
-- **Scope:** U.S. distilled-spirit labels only. Beer, wine, ready-to-drink products, non-U.S. regimes, and broader advertising claims are out of scope.
+- **Profile scope:** The interface supports distilled spirits, beer, and wine through shared application, CSV, parsing, and evidence-review workflows. Beer and wine support does not claim complete product-specific regulatory coverage; ready-to-drink products, non-U.S. regimes, and broader advertising claims remain out of scope.
 - **Evidence:** JPEG, PNG, and WebP only; PDFs, HEIC, and camera-live capture are not supported. Each file is capped at 10 MB and a selection is capped at 300 files.
-- **Physical-label checks:** OCR cannot prove printed type size, contrast, bold styling, package curvature, label attachment, or other physical-label requirements. An agent must verify the visual warning typography and any physical characteristics.
+- **Physical-label checks:** The app provides no automatic proof of glare, deskew, contrast, type size, boldness, or full legal compliance. An agent must verify visual warning typography, image conditions, and any physical-label characteristics.
 - **OCR:** English OCR may misread stylized, curved, low-resolution, obstructed, or multilingual labels. Low-confidence and missing values remain review work, not silent defaults. Live OCR currently downscales images but does not apply contrast, deskew, or thresholding. The degraded guided scenario uses CSS-only visual degradation as a clearly disclosed display treatment; it does not alter the fixture's extracted evidence or claim live image preprocessing.
 - **Brand-name heuristic:** the parser proposes a brand candidate from prominent all-caps display lines. Lowercase or stylized wordmarks may not produce a candidate and fall to unreadable/review rather than a guess.
 - **Workflow:** there is no authentication, persistence, audit trail, role management, cloud batch service, or automatic approval. The batch queue runs in the current browser session. A human reviewer must make any final compliance or COLA-related decision.
@@ -198,7 +211,7 @@ For a production deployment, review the hosting provider’s own request logging
 
 - **Local OCR over a cloud vision model.** The agency network blocks outbound calls to ML endpoints — a prior vendor pilot failed partly on that. Browser-local OCR needs no credentials, sends no label data anywhere, and works behind the firewall; the accepted cost is lower accuracy on stylized or degraded labels, which the confidence thresholds route to human review instead of guessing. The `ExtractFromImage` seam is where an approved vision endpoint would plug in without touching validation or UI code.
 - **Speed is measured, not guaranteed.** The warm worker pool and image downscaling target the five-second expectation, and the UI reports real per-label timings — but local CPU recognition on older hardware can still run over for difficult labels. See [Performance](#performance).
-- **Distilled spirits only.** Beer and wine have different mandatory-information rules; a narrow, correct rule set was chosen over a broad, shallow one. The validation engine is a pure module, so additional beverage-type rule sets are additive.
+- **Three declared profiles, bounded legal claims.** Beer and wine share the declared-facts and evidence-review workflow with distilled spirits, while proof remains limited to distilled spirits and alcohol-content exceptions remain human review. Product-specific legal coverage is deliberately not implied.
 - **Strict CSV over forgiving CSV.** A malformed batch row is rejected with a line-numbered error rather than silently downgraded — in a compliance context, a silently skipped check is worse than a rejected import.
 - **No persistence.** Everything lives in the browser session. That is the right privacy posture for a prototype handling label artwork, and the wrong one for production — the [Azure path](#future-azure-path) covers what durable storage must add.
 

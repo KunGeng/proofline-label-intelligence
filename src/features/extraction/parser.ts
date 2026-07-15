@@ -6,7 +6,7 @@ export type { CandidateConfidenceResolver } from './confidence';
 const normalizeWhitespace = (value: string): string => value.replace(/\s+/g, ' ').trim();
 
 const classTypePattern =
-  /\b(?:bourbon|whiskey|whisky|vodka|gin|rum|tequila|brandy)\b/i;
+  /\b(?:india\s+pale\s+ale|pale\s+ale|lager|stout|porter|cabernet\s+sauvignon|chardonnay|merlot|pinot\s+noir|sauvignon\s+blanc|bourbon|whiskey|whisky|vodka|gin|rum|tequila|brandy)\b/i;
 const abvPattern =
   /\b(\d{1,2}(?:\.\d+)?\s*%)\s*(?:alc\.?\s*\/\s*vol\.?|abv|alcohol\s+by\s+volume)\b(?:[^\w\s]+)?/i;
 const proofPattern = /\(?\s*(\d{1,3}(?:\.\d+)?)\s*proof\s*\)?/i;

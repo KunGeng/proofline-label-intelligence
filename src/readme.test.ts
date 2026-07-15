@@ -30,10 +30,30 @@ describe('submission documentation', () => {
 
     expect(readme).toMatch(/two (?:OCR )?workers/i);
     expect(readme).toMatch(/visual typography confirmation/i);
+    expect(readme).toMatch(/distilled spirits, beer, and wine/i);
+    expect(readme).toMatch(/beverage_type/i);
+    expect(readme).toMatch(/alcohol_content_expectation/i);
+    expect(readme).toMatch(/no usable OCR evidence/i);
+    expect(readme).toMatch(/never auto-pass.*bold/i);
     expect(readme).toContain('https://www.ecfr.gov/current/title-27/chapter-I/subchapter-A/part-16');
     expect(readme).toContain('https://www.ecfr.gov/current/title-27/chapter-I/subchapter-A/part-16/subpart-C/section-16.21');
     expect(readme).toContain('https://www.ecfr.gov/current/title-27/chapter-I/subchapter-A/part-16/subpart-C/section-16.22');
     expect(readme).toContain('https://github.com/KunGeng/proofline-label-intelligence');
+  });
+
+  it('documents the local photo-readiness advisory without implying visual proof', async () => {
+    const [readme, design] = await Promise.all([
+      readFile('README.md', 'utf8'),
+      readFile('docs/DESIGN.md', 'utf8'),
+    ]);
+
+    for (const document of [readme, design]) {
+      expect(document).toMatch(/browser-local photo-readiness advisory/i);
+      expect(document).toMatch(/1,000\s*px longest edge/i);
+      expect(document).toMatch(/dimensions cannot be read/i);
+      expect(document).toMatch(/straight-on, evenly lit, glare-free retake/i);
+      expect(document).toMatch(/does not detect or prove glare/i);
+    }
   });
 
   it('ships a usable CSV intake template that references the sample JPEG label', async () => {

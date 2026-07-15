@@ -20,8 +20,8 @@ follow from that:
 
 1. **The agent owns the decision.** The application never says "approved." A clean
    comparison reads *"No discrepancies detected — agent approval required."* Checks that
-   OCR cannot make reliably (warning-heading boldness, capitalization rendering, type
-   size) are explicit human confirmation tasks, not silent passes.
+   OCR cannot make reliably (warning-heading uppercase presentation, boldness,
+   legibility, type size) are independent human confirmation tasks, not silent passes.
 2. **Evidence stays inspectable.** Every extracted candidate carries its raw OCR text,
    confidence, and source (`ocr`, `fixture`, or `agent`). Corrections replace the
    candidate value and mark it **Agent-entered** — the original raw OCR remains visible
@@ -30,15 +30,17 @@ follow from that:
 
 ## Scope
 
-U.S. distilled-spirit labels, matching the provided bourbon example. Compared fields:
-brand name, class/type, ABV and optional proof (including the proof = 2 × ABV
-consistency check), net contents, producer/bottler address, import status plus country
-of origin when applicable, and the federal government warning (body text, literal
-uppercase `GOVERNMENT WARNING:` heading, and a manual typography confirmation).
+Proofline supports three declared profiles: distilled spirits, beer, and wine. All
+three use the same browser-local evidence workflow for brand name, class/type, net
+contents, producer/bottler address, import status plus country of origin when
+applicable, and the government warning. Declared ABV is compared when the selected
+profile requires it; beer and wine can instead use a manual alcohol-content review
+state. Proof and proof = 2 × ABV consistency are limited to distilled spirits.
 
-Non-goals, stated in the UI and README rather than hidden: COLA integration, accounts,
-persistence, audit records, beer/wine rule coverage, automatic approval or rejection,
-and any claim that OCR proves physical-label characteristics.
+That profile support is not a claim of complete beer- or wine-specific legal rule
+coverage. Non-goals, stated in the UI and README rather than hidden, include COLA
+integration, accounts, persistence, audit records, automatic approval or rejection,
+and any claim that OCR proves physical-label characteristics or full legal compliance.
 
 ## Architecture
 
@@ -50,7 +52,7 @@ direction:
 | `src/domain` | Pure validation engine: normalization, parsing, field rules, status precedence. Imports nothing from UI or OCR code. |
 | `src/features/extraction` | Local Tesseract OCR adapter, candidate parser, image preparation. |
 | `src/features/intake` | Strict CSV parsing, filename matching, cancellation-aware batch queue, results export. |
-| `src/features/demo` | Fixture-backed guided demo case. |
+| `src/features/demo` | Fixture-backed guided demo cases, disclosed as precomputed evidence. |
 | `src/components` | Review desk, intake form, batch workspace — consumers of the layers above. |
 
 The extraction boundary (`ExtractFromImage`) is deliberately small so a different OCR
@@ -68,6 +70,10 @@ score.
 The guided low-confidence scenario uses CSS-only visual degradation as a disclosed
 presentation treatment. It does not alter the live OCR input or fixture evidence, so it
 does not represent contrast, deskew, thresholding, or another OCR-preprocessing step.
+
+The review desk keeps evidence local to the current browser session. Its evidence viewer
+offers local zoom, zoom out, and reset controls for both image and fixture evidence; the
+controls aid inspection but do not alter the evidence or make a compliance finding.
 
 ### Why local OCR instead of a cloud vision model
 
@@ -98,6 +104,15 @@ The local benchmark explicitly disables the five-second OCR deadline. It does so
 ensure its first and warm-worker timings remain an honest measurement of the current
 device. The deadline is an automated-wait target under normal responsive browser
 scheduling, not an absolute real-time guarantee while a browser event loop is blocked.
+
+**Browser-local photo-readiness advisory:** before OCR, the browser checks accepted
+image dimensions locally. An image below the recommended 1,000 px longest edge, or one
+whose dimensions cannot be read, remains usable but receives non-blocking guidance that
+a straight-on, evenly lit, glare-free retake may improve OCR. This advisory does not detect or prove glare, or guarantee that the next extraction will be ready, quick to read, or successful on this device.
+
+When OCR returns **no usable OCR evidence**, the original label and declared facts stay
+available in a manual-evidence workspace. A reviewer can enter evidence or retry OCR;
+this recovery is not a successful extraction and never resolves a review automatically.
 
 Design responses:
 
@@ -133,20 +148,25 @@ Field-specific behavior:
   `Stone's Throw`); a normalized similarity below 0.85 with high OCR confidence is a
   mismatch.
 - **ABV / proof / net contents**: numeric comparison after unit-aware parsing
-  (mL/L/fl oz). Proof, when present, must satisfy proof = 2 × ABV within one proof
-  point. An application-side value that fails to parse routes to review with a message
-  that blames the application, not the label; both the single-label form and the CSV
-  intake validate these formats up front so that case is rare.
+  (mL/L/fl oz). Declared ABV is compared for the selected profile; a manual alcohol-content
+  expectation intentionally remains an agent task. Proof, when present, is limited to
+  distilled spirits and must satisfy proof = 2 × ABV within one proof point. An
+  application-side value that fails to parse routes to review with a message that blames
+  the application, not the label; both the single-label form and the CSV intake validate
+  these formats up front so that case is rare.
 - **Government warning**: the body is compared to the canonical 27 CFR Part 16
   statement after whitespace normalization only; the heading must be the literal
-  uppercase `GOVERNMENT WARNING:`. Typography (bold, capitalization rendering) is an
-  explicit reviewer confirmation that participates in overall status until checked.
-  Warning legibility is a manual reviewer confirmation. It records the reviewer's
-  inspection of legibility, contrast, and placement; it is separate from the
-  typography check and neither is an OCR-derived pass. Exact printed type size remains a final regulatory review responsibility.
+  uppercase `GOVERNMENT WARNING:`. Uppercase, bold, and legibility are independent
+  reviewer attestations that participate in overall status until checked. Casing never
+  infers boldness, and the app never auto-passes bold. Warning legibility records the
+  reviewer's inspection of legibility, contrast, and placement; it is separate from the
+  uppercase and bold checks and none is an OCR-derived pass. Exact printed type size
+  remains a final regulatory review responsibility.
 
 ## Batch intake
 
+The exact application header order is
+`filename,brandName,classType,beverage_type,alcohol_content_expectation,abv,proof,netContents,producerAddress,isImported,countryOfOrigin`.
 CSV matching is strict by design: partial application schemas are rejected rather than
 silently downgraded, duplicate filenames (in the selection or the CSV) are refused
 because a safe one-to-one match cannot be inferred, and filename-only rows run as
@@ -156,6 +176,18 @@ through two workers, supports retry (including while the batch is still processi
 and exports per-file results with a field-level findings column. Clearing a batch
 cancels pending work and releases object URLs; late-settling worker results for a
 cleared batch are discarded by generation tokens.
+
+`beverage_type` is `distilled_spirits`, `beer`, or `wine`; `alcohol_content_expectation`
+is `declared` or `manual_review` where that profile allows it. `abv` is required only for
+declared alcohol content, and `proof` is accepted only for distilled spirits.
+
+## Limitations
+
+The app provides no automatic proof of glare, deskew, contrast, type size, boldness, or
+full legal compliance. It does not apply automatic glare detection, deskew, contrast
+enhancement, or a type-size/boldness measurement. OCR, fixture text, and a reviewer
+attestation are evidence aids; final legal and physical-label decisions remain with the
+responsible human reviewer.
 
 ## Testing
 

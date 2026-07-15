@@ -1,6 +1,10 @@
 import { CANONICAL_WARNING_BODY } from '../../domain/constants';
 import { validateLabel } from '../../domain/validation';
-import { demoCases, OLD_TOM_RAW_TEXT } from '../demo/cases';
+import {
+  demoCases,
+  demoLabelFixtureContent,
+  OLD_TOM_RAW_TEXT,
+} from '../demo/cases';
 import { createCandidateConfidenceResolver } from './confidence';
 import { extractFromText } from './parser';
 
@@ -11,6 +15,9 @@ describe('extractFromText', () => {
       mismatch: 0.99,
       'foreign-origin': 0.96,
       'warning-heading': 0.96,
+      'non-bold-warning': 0.96,
+      beer: 0.99,
+      wine: 0.99,
       degraded: 0.55,
     } as const;
 
@@ -19,6 +26,9 @@ describe('extractFromText', () => {
       'mismatch',
       'foreign-origin',
       'warning-heading',
+      'non-bold-warning',
+      'beer',
+      'wine',
       'degraded',
     ]);
     expect(demoCases.map((demoCase) => demoCase.disclosure)).toEqual([
@@ -26,6 +36,9 @@ describe('extractFromText', () => {
       'Precomputed fixture using the shown Old Tom sample. The application brand intentionally conflicts with visible label evidence.',
       'Precomputed illustrative fixture — not a live OCR timing result.',
       'Precomputed illustrative fixture — not a live OCR timing result.',
+      'Precomputed illustrative fixture — not a live OCR timing result.',
+      'Precomputed illustrative beer fixture — not a live OCR timing result.',
+      'Precomputed illustrative wine fixture — not a live OCR timing result.',
       'Precomputed low-confidence fixture shown with a visual degradation treatment — not a live OCR timing result.',
     ]);
 
@@ -53,8 +66,50 @@ describe('extractFromText', () => {
       'mismatch',
       'needs_review',
       'mismatch',
+      'needs_review',
+      'needs_review',
+      'needs_review',
       'unreadable',
     ]);
+  });
+
+  it('discloses guided beer and wine cases as fixture evidence with their profile facts', () => {
+    const beer = demoCases.find((demoCase) => demoCase.id === 'beer');
+    const wine = demoCases.find((demoCase) => demoCase.id === 'wine');
+
+    expect(beer).toMatchObject({
+      application: {
+        beverageType: 'beer',
+        alcoholContentExpectation: 'declared',
+        brandName: 'HOP FIELD',
+        classType: 'India Pale Ale',
+        abv: '6.2%',
+      },
+      disclosure: expect.stringMatching(/fixture/i),
+    });
+    expect(beer?.rawText).toContain('6.2% Alc./Vol.');
+    expect(beer?.extraction).toMatchObject({
+      classType: { value: 'India Pale Ale', confidence: 0.99 },
+      abv: { value: '6.2%', confidence: 0.99 },
+    });
+
+    expect(wine).toMatchObject({
+      application: {
+        beverageType: 'wine',
+        alcoholContentExpectation: 'manual_review',
+        brandName: 'ESTATE RED',
+        classType: 'Cabernet Sauvignon',
+      },
+      disclosure: expect.stringMatching(/fixture/i),
+    });
+    expect(wine?.application.abv).toBeUndefined();
+    expect(wine?.rawText).not.toMatch(/%\s*(?:Alc\.?\s*\/\s*Vol\.?|ABV)/i);
+    expect(wine?.extraction.abv).toBeUndefined();
+
+    expect(demoLabelFixtureContent['non-bold-warning']).toMatchObject({
+      warningHeading: 'GOVERNMENT WARNING:',
+      warningHeadingBold: false,
+    });
   });
 
   it('parses the foreign-origin and title-case fixture text exactly as shown', () => {
@@ -94,6 +149,47 @@ describe('extractFromText', () => {
     expect(extraction.producerAddress?.value).toBe(
       'Old Tom Distillery, Louisville, KY',
     );
+  });
+
+  it('extracts beer class and ABV values from the declared Hop Field evidence', () => {
+    const extraction = extractFromText(
+      'HOP FIELD\nIndia Pale Ale\n6.2% Alc./Vol.\n355 mL\nBrewed by Hop Field, OR',
+      0.99,
+    );
+
+    expect(extraction.classType?.value).toBe('India Pale Ale');
+    expect(extraction.classType?.confidence).toBe(0.99);
+    expect(extraction.abv?.value).toBe('6.2%');
+  });
+
+  it('extracts wine class without inventing a declared ABV', () => {
+    const extraction = extractFromText(
+      'ESTATE RED\nCabernet Sauvignon\n750 mL\nProduced by Estate Winery, CA',
+      0.99,
+    );
+
+    expect(extraction.classType?.value).toBe('Cabernet Sauvignon');
+    expect(extraction.classType?.confidence).toBe(0.99);
+    expect(extraction.abv).toBeUndefined();
+  });
+
+  it.each([
+    'Pale Ale',
+    'Lager',
+    'Stout',
+    'Porter',
+    'Chardonnay',
+    'Merlot',
+    'Pinot Noir',
+    'Sauvignon Blanc',
+  ])('extracts %s as a class/type candidate', (classType) => {
+    const extraction = extractFromText(`LABEL BRAND\n${classType}\n750 mL`, 0.99);
+
+    expect(extraction.classType).toMatchObject({
+      value: classType,
+      rawText: classType,
+      confidence: 0.99,
+    });
   });
 
   it('extracts a display-line brand without distillery vocabulary', () => {
