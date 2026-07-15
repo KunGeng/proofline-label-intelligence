@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { ReviewDesk } from './ReviewDesk';
 
-it('makes no-application manual evidence actions reachable in an accessible scroll region', () => {
+it('keeps manual actions reachable and blocks visual confirmations without a visual source', () => {
   render(
     <ReviewDesk
       title="triage.png"
@@ -12,8 +12,10 @@ it('makes no-application manual evidence actions reachable in an accessible scro
       shouldFocusManualDisclosure={false}
       manualEvidence
       onRetryOcr={() => undefined}
-      warningTypographyConfirmed={false}
-      onWarningTypographyConfirmed={() => undefined}
+      warningUppercaseConfirmed={false}
+      onWarningUppercaseConfirmed={() => undefined}
+      warningBoldConfirmed={false}
+      onWarningBoldConfirmed={() => undefined}
       warningLegibilityConfirmed={false}
       onWarningLegibilityConfirmed={() => undefined}
       onCorrectCandidate={() => undefined}
@@ -28,4 +30,14 @@ it('makes no-application manual evidence actions reachable in an accessible scro
 
   expect(tableRegion).toContainElement(screen.getByRole('table'));
   expect(screen.getByRole('button', { name: /add brand name candidate/i })).toBeInTheDocument();
+  expect(screen.getByRole('checkbox', {
+    name: /printed heading is uppercase/i,
+  })).toBeDisabled();
+  expect(screen.getByRole('checkbox', {
+    name: /government warning is bold/i,
+  })).toBeDisabled();
+  expect(screen.getByRole('checkbox', {
+    name: /reviewed warning legibility, contrast, and placement/i,
+  })).toBeDisabled();
+  expect(screen.getByText(/visual evidence is unavailable/i)).toBeInTheDocument();
 });

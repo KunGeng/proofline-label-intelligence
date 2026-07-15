@@ -389,18 +389,13 @@ function BatchFullReview({
           onRetry(item.id);
           onBack();
         }}
-        warningTypographyConfirmed={
-          item.reviewFlags.warningUppercaseConfirmed &&
-          item.reviewFlags.warningBoldConfirmed
+        warningUppercaseConfirmed={item.reviewFlags.warningUppercaseConfirmed}
+        onWarningUppercaseConfirmed={(confirmed) =>
+          onUpdateFlags({ warningUppercaseConfirmed: confirmed }, hasVisualEvidence)
         }
-        onWarningTypographyConfirmed={(confirmed) =>
-          onUpdateFlags(
-            {
-              warningUppercaseConfirmed: confirmed,
-              warningBoldConfirmed: confirmed,
-            },
-            hasVisualEvidence,
-          )
+        warningBoldConfirmed={item.reviewFlags.warningBoldConfirmed}
+        onWarningBoldConfirmed={(confirmed) =>
+          onUpdateFlags({ warningBoldConfirmed: confirmed }, hasVisualEvidence)
         }
         warningLegibilityConfirmed={item.reviewFlags.warningLegibilityConfirmed}
         onWarningLegibilityConfirmed={(confirmed) =>

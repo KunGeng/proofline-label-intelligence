@@ -108,7 +108,8 @@ export function App({ initialBatchItems }: AppProps) {
     initialBatchItems ? 'batch' : 'landing',
   );
   const [review, setReview] = useState<ActiveReview>();
-  const [warningTypographyConfirmed, setWarningTypographyConfirmed] = useState(false);
+  const [warningUppercaseConfirmed, setWarningUppercaseConfirmed] = useState(false);
+  const [warningBoldConfirmed, setWarningBoldConfirmed] = useState(false);
   const [warningLegibilityConfirmed, setWarningLegibilityConfirmed] = useState(false);
   const extractionRun = useRef(0);
   const extractionAbort = useRef<AbortController | undefined>(undefined);
@@ -132,7 +133,8 @@ export function App({ initialBatchItems }: AppProps) {
   );
 
   const resetVisualConfirmations = (): void => {
-    setWarningTypographyConfirmed(false);
+    setWarningUppercaseConfirmed(false);
+    setWarningBoldConfirmed(false);
     setWarningLegibilityConfirmed(false);
   };
 
@@ -395,8 +397,8 @@ export function App({ initialBatchItems }: AppProps) {
               extraction: review.extraction,
               flags: {
                 ...emptyReviewFlags,
-                warningUppercaseConfirmed: warningTypographyConfirmed,
-                warningBoldConfirmed: warningTypographyConfirmed,
+                warningUppercaseConfirmed,
+                warningBoldConfirmed,
                 warningLegibilityConfirmed,
               },
               hasVisualEvidence: Boolean(review.imageUrl || review.evidencePreview),
@@ -422,8 +424,10 @@ export function App({ initialBatchItems }: AppProps) {
           shouldFocusManualDisclosure={Boolean(review.shouldFocusManualDisclosure)}
           manualEvidence={review.isManualEvidence}
           onRetryOcr={retryOcr}
-          warningTypographyConfirmed={warningTypographyConfirmed}
-          onWarningTypographyConfirmed={setWarningTypographyConfirmed}
+          warningUppercaseConfirmed={warningUppercaseConfirmed}
+          onWarningUppercaseConfirmed={setWarningUppercaseConfirmed}
+          warningBoldConfirmed={warningBoldConfirmed}
+          onWarningBoldConfirmed={setWarningBoldConfirmed}
           warningLegibilityConfirmed={warningLegibilityConfirmed}
           onWarningLegibilityConfirmed={setWarningLegibilityConfirmed}
           onCorrectCandidate={correctCandidate}

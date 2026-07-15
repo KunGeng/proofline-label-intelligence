@@ -15,12 +15,15 @@ import {
   StatusBadge,
   statusLabel,
 } from './ui';
+import { EvidenceImageViewer } from './EvidenceImageViewer';
 
 export type CandidateField = keyof LabelExtraction;
 export type ReviewDeskPhase = 'processing' | 'error' | 'ready';
 
 const isCandidateField = (field: FieldKey): field is CandidateField =>
-  field !== 'warningTypography' &&
+  field !== 'alcoholContentRequirement' &&
+  field !== 'warningUppercase' &&
+  field !== 'warningBold' &&
   field !== 'warningLegibility' &&
   field !== 'abvProofConsistency';
 
@@ -42,8 +45,10 @@ interface ReviewDeskProps {
   shouldFocusManualDisclosure: boolean;
   manualEvidence?: boolean;
   onRetryOcr?: () => void;
-  warningTypographyConfirmed: boolean;
-  onWarningTypographyConfirmed: (confirmed: boolean) => void;
+  warningUppercaseConfirmed: boolean;
+  onWarningUppercaseConfirmed: (confirmed: boolean) => void;
+  warningBoldConfirmed: boolean;
+  onWarningBoldConfirmed: (confirmed: boolean) => void;
   warningLegibilityConfirmed: boolean;
   onWarningLegibilityConfirmed: (confirmed: boolean) => void;
   onCorrectCandidate: (field: CandidateField, value: string) => void;
@@ -75,11 +80,13 @@ const decisionTitleFor = (state: ReviewState): string =>
   state === 'match' ? 'No discrepancies detected' : statusLabel(state);
 
 const taskTargetFor = (field: FieldKey): string =>
-  field === 'warningTypography'
-    ? '#typography-confirmation'
-    : field === 'warningLegibility'
-      ? '#legibility-confirmation'
-      : '#field-comparison';
+  field === 'warningUppercase'
+    ? '#uppercase-confirmation'
+    : field === 'warningBold'
+      ? '#bold-confirmation'
+      : field === 'warningLegibility'
+        ? '#legibility-confirmation'
+        : '#field-comparison';
 
 const confidenceText = (candidate: Candidate): string =>
   candidate.source === 'agent'
@@ -124,8 +131,10 @@ export function ReviewDesk({
   shouldFocusManualDisclosure,
   manualEvidence,
   onRetryOcr,
-  warningTypographyConfirmed,
-  onWarningTypographyConfirmed,
+  warningUppercaseConfirmed,
+  onWarningUppercaseConfirmed,
+  warningBoldConfirmed,
+  onWarningBoldConfirmed,
   warningLegibilityConfirmed,
   onWarningLegibilityConfirmed,
   onCorrectCandidate,
@@ -143,8 +152,12 @@ export function ReviewDesk({
   const correctionTriggerRefs = useRef<
     Partial<Record<CandidateField, HTMLButtonElement | null>>
   >({});
-  const warningTypography = result?.fields.find(
-    (field) => field.field === 'warningTypography',
+  const hasVisualEvidence = Boolean(imageUrl || evidencePreview);
+  const warningUppercase = result?.fields.find(
+    (field) => field.field === 'warningUppercase',
+  );
+  const warningBold = result?.fields.find(
+    (field) => field.field === 'warningBold',
   );
   const warningLegibility = result?.fields.find(
     (field) => field.field === 'warningLegibility',
@@ -320,23 +333,22 @@ export function ReviewDesk({
   const progressPercent = typeof progress === 'number'
     ? Math.round(Math.max(0, Math.min(1, progress)) * 100)
     : undefined;
+  const confirmationClassName = `checkbox-field checkbox-field--confirmation${
+    hasVisualEvidence ? '' : ' checkbox-field--confirmation-disabled'
+  }`;
 
   const evidenceColumn = (
     <aside className="evidence-column" aria-label="Label evidence">
       <SectionCard title="Label evidence" eyebrow="What the label shows">
-        {evidencePreview ?? (
-          imageUrl ? (
-            <figure className="label-preview">
-              <img
-                className={imageClassName}
-                src={imageUrl}
-                alt={`Label preview: ${title}`}
-              />
-              <figcaption>Evidence stays attached to this review for the current browser session.</figcaption>
-            </figure>
-          ) : (
-            <p className="muted">No preview is available for this label.</p>
-          )
+        {hasVisualEvidence ? (
+          <EvidenceImageViewer
+            src={imageUrl}
+            alt={`Label preview: ${title}`}
+            imageClassName={imageClassName}
+            fixture={evidencePreview}
+          />
+        ) : (
+          <p className="muted">No preview is available for this label.</p>
         )}
         <details className="raw-text" id="raw-evidence">
           <summary>View complete extracted text</summary>
@@ -345,30 +357,51 @@ export function ReviewDesk({
       </SectionCard>
 
       <SectionCard title="Required visual confirmation" eyebrow="Agent check">
-        <div id="typography-confirmation">
+        <div id="uppercase-confirmation">
           <p className="section-copy">
             OCR can read the wording, but it cannot verify the warning heading’s presentation.
           </p>
-          <label className="checkbox-field checkbox-field--confirmation">
+          <label className={confirmationClassName}>
             <input
               type="checkbox"
-              checked={warningTypographyConfirmed}
-              onChange={(event) => onWarningTypographyConfirmed(event.target.checked)}
+              checked={hasVisualEvidence && warningUppercaseConfirmed}
+              disabled={!hasVisualEvidence}
+              onChange={(event) => onWarningUppercaseConfirmed(event.target.checked)}
             />
-            <span>I visually confirmed the warning heading is uppercase and bold.</span>
+            <span>I visually confirmed the printed heading is uppercase.</span>
           </label>
-          {warningTypography ? (
+          {warningUppercase ? (
             <div className="confirmation-status">
-              <StatusBadge state={warningTypography.state} />
-              <p>{warningTypography.reason}</p>
+              <StatusBadge state={warningUppercase.state} />
+              <p>{warningUppercase.reason}</p>
             </div>
           ) : null}
         </div>
-        <div className="warning-legibility-confirmation" id="legibility-confirmation">
-          <label className="checkbox-field checkbox-field--confirmation">
+        <div className="warning-visual-confirmation" id="bold-confirmation">
+          <label className={confirmationClassName}>
             <input
               type="checkbox"
-              checked={warningLegibilityConfirmed}
+              checked={hasVisualEvidence && warningBoldConfirmed}
+              disabled={!hasVisualEvidence}
+              onChange={(event) => onWarningBoldConfirmed(event.target.checked)}
+            />
+            <span>
+              I visually confirmed GOVERNMENT WARNING is bold and the remaining warning text is not bold.
+            </span>
+          </label>
+          {warningBold ? (
+            <div className="confirmation-status">
+              <StatusBadge state={warningBold.state} />
+              <p>{warningBold.reason}</p>
+            </div>
+          ) : null}
+        </div>
+        <div className="warning-visual-confirmation" id="legibility-confirmation">
+          <label className={confirmationClassName}>
+            <input
+              type="checkbox"
+              checked={hasVisualEvidence && warningLegibilityConfirmed}
+              disabled={!hasVisualEvidence}
               onChange={(event) => onWarningLegibilityConfirmed(event.target.checked)}
             />
             <span>
@@ -383,6 +416,11 @@ export function ReviewDesk({
             </div>
           ) : null}
         </div>
+        {!hasVisualEvidence ? (
+          <p className="visual-confirmation-unavailable">
+            Visual evidence is unavailable, so this confirmation cannot be completed.
+          </p>
+        ) : null}
       </SectionCard>
     </aside>
   );
@@ -528,7 +566,7 @@ export function ReviewDesk({
               application record with each label candidate.
             </li>
             <li>
-              <a href="#typography-confirmation">Complete the visual typography check</a> on
+              <a href="#uppercase-confirmation">Complete the visual warning checks</a> on
               the label preview. Text extraction cannot make that confirmation.
             </li>
           </ol>

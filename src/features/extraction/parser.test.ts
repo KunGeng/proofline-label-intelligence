@@ -41,9 +41,11 @@ describe('extractFromText', () => {
           application: demoCase.application,
           extraction: demoCase.extraction,
           flags: {
-            warningTypographyConfirmed: false,
+            warningUppercaseConfirmed: false,
+            warningBoldConfirmed: false,
             warningLegibilityConfirmed: false,
           },
+          hasVisualEvidence: true,
         }).overallState,
       ),
     ).toEqual([

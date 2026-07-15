@@ -1124,7 +1124,9 @@ input:not([type="checkbox"]):not([type="file"])[aria-invalid="true"] {
 }
 
 #raw-evidence,
-#typography-confirmation,
+#uppercase-confirmation,
+#bold-confirmation,
+#legibility-confirmation,
 #field-comparison {
   scroll-margin-top: 24px;
 }
@@ -1244,6 +1246,63 @@ input:not([type="checkbox"]):not([type="file"])[aria-invalid="true"] {
   line-height: 1.35;
 }
 
+.evidence-image-viewer__open {
+  display: block;
+  margin-top: 10px;
+}
+
+.evidence-image-viewer__expanded {
+  padding: 12px;
+  margin-bottom: 24px;
+  background: #e4ded0;
+  border: 1px solid var(--line);
+}
+
+.evidence-image-viewer__controls,
+.evidence-image-viewer__zoom-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.evidence-image-viewer__controls {
+  justify-content: space-between;
+}
+
+.evidence-image-viewer__controls .text-button:focus-visible {
+  outline: 3px solid var(--forest);
+  outline-offset: 3px;
+}
+
+.evidence-image-viewer__zoom-level {
+  margin: 12px 0 8px;
+  color: var(--ink-soft);
+  font-size: 0.72rem;
+  font-weight: 760;
+}
+
+.evidence-image-viewer__full-size {
+  max-height: 560px;
+  padding: 12px;
+  overflow: auto;
+  background: #f1f3ec;
+}
+
+.evidence-image-viewer__full-size > img,
+.evidence-image-viewer__full-size > div {
+  display: block;
+  width: 100%;
+  max-width: none;
+  transform-origin: top left;
+}
+
+.evidence-image-viewer__full-size > img {
+  min-height: 210px;
+  object-fit: contain;
+  background: #e4ded0;
+}
+
 .demo-label-fixture {
   position: relative;
   padding: 24px 19px 18px;
@@ -1352,10 +1411,27 @@ input:not([type="checkbox"]):not([type="file"])[aria-invalid="true"] {
   line-height: 1.35;
 }
 
-.warning-legibility-confirmation {
+.warning-visual-confirmation {
   padding-top: 16px;
   margin-top: 16px;
   border-top: 1px solid var(--line);
+}
+
+.checkbox-field--confirmation-disabled {
+  color: var(--ink-soft);
+  background: #eef0ea;
+  border-color: #c6cec5;
+}
+
+.checkbox-field--confirmation-disabled input {
+  cursor: not-allowed;
+}
+
+.visual-confirmation-unavailable {
+  margin: 16px 0 0;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  line-height: 1.4;
 }
 
 .confirmation-status {

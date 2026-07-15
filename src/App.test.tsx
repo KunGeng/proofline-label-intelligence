@@ -100,7 +100,10 @@ const enterManualRecoveryEvidence = async (
   await user.click(screen.getByRole('button', { name: /save proof candidate/i }));
   await user.click(screen.getByRole('button', { name: /remove proof evidence/i }));
   await user.click(
-    screen.getByRole('checkbox', { name: /warning heading is uppercase and bold/i }),
+    screen.getByRole('checkbox', { name: /printed heading is uppercase/i }),
+  );
+  await user.click(
+    screen.getByRole('checkbox', { name: /government warning is bold/i }),
   );
 };
 
@@ -298,7 +301,24 @@ it('opens the title-case warning fixture with the shown warning-heading mismatch
   const fixture = screen.getByRole('figure', { name: /illustrative label fixture/i });
   expect(fixture).toHaveTextContent('Produced by North Coast Spirits, Portland, OR');
   expect(within(fixture).getByText('Government Warning:')).toBeInTheDocument();
-  expect(screen.getByRole('row', { name: /warning heading/i })).toHaveTextContent('Mismatch');
+
+  const uppercase = screen.getByRole('checkbox', {
+    name: /printed heading is uppercase/i,
+  });
+  const bold = screen.getByRole('checkbox', {
+    name: /government warning is bold/i,
+  });
+  const legibility = screen.getByRole('checkbox', {
+    name: /reviewed warning legibility, contrast, and placement/i,
+  });
+  await user.click(uppercase);
+  await user.click(bold);
+  await user.click(legibility);
+
+  expect(uppercase).toBeChecked();
+  expect(bold).toBeChecked();
+  expect(legibility).toBeChecked();
+  expect(screen.getByRole('row', { name: /^warning heading\b/i })).toHaveTextContent('Mismatch');
 });
 
 it('shows degraded Old Tom evidence as a low-confidence fixture without live OCR', async () => {
@@ -860,7 +880,7 @@ it('releases the full-review object URL when returning to the batch', async () =
   }
 });
 
-it('revalidates each batch visual confirmation and preserves the queue filter and search after returning', async () => {
+it('persists independent batch visual confirmations and preserves the queue filter and search after returning', async () => {
   const user = userEvent.setup();
   const originalCreate = URL.createObjectURL;
   const originalRevoke = URL.revokeObjectURL;
@@ -885,7 +905,7 @@ it('revalidates each batch visual confirmation and preserves the queue filter an
 
   await user.click(
     screen.getByRole('checkbox', {
-      name: /i visually confirmed the warning heading is uppercase and bold/i,
+      name: /government warning is bold/i,
     }),
   );
   await user.click(screen.getByRole('button', { name: /back to batch/i }));
@@ -893,10 +913,18 @@ it('revalidates each batch visual confirmation and preserves the queue filter an
   expect(screen.getByLabelText(/^show$/i)).toHaveValue('needs_review');
   expect(screen.getByRole('searchbox', { name: /search filename/i })).toHaveValue('ready');
   const row = screen.getByRole('row', { name: /ready\.png/i });
-  expect(within(row).getAllByRole('cell')[3]).toHaveTextContent('1');
+  expect(within(row).getAllByRole('cell')[3]).toHaveTextContent('2');
 
   await user.click(
     screen.getByRole('button', { name: /open full review for ready\.png/i }),
+  );
+  expect(
+    screen.getByRole('checkbox', { name: /government warning is bold/i }),
+  ).toBeChecked();
+  await user.click(
+    screen.getByRole('checkbox', {
+      name: /printed heading is uppercase/i,
+    }),
   );
   await user.click(
     screen.getByRole('checkbox', {
@@ -1205,20 +1233,20 @@ it('orients the fixture-backed demo around the next three review actions', async
     '#field-comparison',
   );
   expect(
-    screen.getByRole('link', { name: /complete the visual typography check/i }),
-  ).toHaveAttribute('href', '#typography-confirmation');
+    screen.getByRole('link', { name: /complete the visual warning checks/i }),
+  ).toHaveAttribute('href', '#uppercase-confirmation');
   expect(
     screen.getByText(/precomputed fixture — not a live OCR timing result/i),
   ).toBeInTheDocument();
   expect(
     screen.getByRole('checkbox', {
-      name: /i visually confirmed the warning heading is uppercase and bold/i,
+      name: /printed heading is uppercase/i,
     }),
   ).not.toBeChecked();
 
   await user.click(
     screen.getByRole('checkbox', {
-      name: /i visually confirmed the warning heading is uppercase and bold/i,
+      name: /printed heading is uppercase/i,
     }),
   );
 
@@ -1431,9 +1459,8 @@ it('keeps manual evidence editable when a deadline retry returns an ordinary OCR
   expect(screen.getByRole('img', { name: /label preview: old-tom\.png/i })).toBeInTheDocument();
   expect(screen.getByText('HUMAN BRAND')).toBeInTheDocument();
   expect(screen.queryByText('90 Proof')).not.toBeInTheDocument();
-  expect(
-    screen.getByRole('checkbox', { name: /warning heading is uppercase and bold/i }),
-  ).toBeChecked();
+  expect(screen.getByRole('checkbox', { name: /printed heading is uppercase/i })).toBeChecked();
+  expect(screen.getByRole('checkbox', { name: /government warning is bold/i })).toBeChecked();
   expect(screen.getByRole('button', { name: /add proof candidate/i })).toBeInTheDocument();
   expect(screen.getByRole('table')).toBeInTheDocument();
 });
@@ -1464,14 +1491,13 @@ it('keeps manual evidence editable when a deadline retry rejects', async () => {
   expect(screen.getByRole('img', { name: /label preview: old-tom\.png/i })).toBeInTheDocument();
   expect(screen.getByText('HUMAN BRAND')).toBeInTheDocument();
   expect(screen.queryByText('90 Proof')).not.toBeInTheDocument();
-  expect(
-    screen.getByRole('checkbox', { name: /warning heading is uppercase and bold/i }),
-  ).toBeChecked();
+  expect(screen.getByRole('checkbox', { name: /printed heading is uppercase/i })).toBeChecked();
+  expect(screen.getByRole('checkbox', { name: /government warning is bold/i })).toBeChecked();
   expect(screen.getByRole('button', { name: /add proof candidate/i })).toBeInTheDocument();
   expect(screen.getByRole('table')).toBeInTheDocument();
 });
 
-it('keeps human value, deliberate blank, and visual flags when retry OCR fills an untouched field', async () => {
+it('keeps human value and a deliberate blank when retry OCR fills an untouched field without a visual source', async () => {
   const user = userEvent.setup();
   vi.mocked(extractFromImage)
     .mockResolvedValueOnce({
@@ -1508,7 +1534,10 @@ it('keeps human value, deliberate blank, and visual flags when retry OCR fills a
   await user.click(screen.getByRole('button', { name: /remove proof evidence/i }));
   expect(screen.getByRole('button', { name: /add proof candidate/i })).toHaveFocus();
   await user.click(
-    screen.getByRole('checkbox', { name: /warning heading is uppercase and bold/i }),
+    screen.getByRole('checkbox', { name: /printed heading is uppercase/i }),
+  );
+  await user.click(
+    screen.getByRole('checkbox', { name: /government warning is bold/i }),
   );
   await user.click(screen.getByRole('button', { name: /retry OCR/i }));
 
@@ -1522,9 +1551,9 @@ it('keeps human value, deliberate blank, and visual flags when retry OCR fills a
       name: /correct alcohol by volume candidate/i,
     }),
   ).toBeInTheDocument();
-  expect(
-    screen.getByRole('checkbox', { name: /warning heading is uppercase and bold/i }),
-  ).toBeChecked();
+  expect(screen.getByRole('checkbox', { name: /printed heading is uppercase/i })).toBeDisabled();
+  expect(screen.getByRole('checkbox', { name: /government warning is bold/i })).toBeDisabled();
+  expect(screen.getByText(/visual evidence is unavailable/i)).toBeInTheDocument();
   expect(screen.getByText(/OCR stopped after five seconds/i)).not.toHaveFocus();
 });
 
@@ -1550,7 +1579,7 @@ it('prewarms OCR only after a reviewer enters a single or batch intake', async (
   });
 });
 
-it('keeps warning typography and legibility confirmations as separate reviewer checks', async () => {
+it('keeps uppercase, bold, and legibility confirmations independently controlled with an image preview', async () => {
   const user = userEvent.setup();
   const originalCreate = URL.createObjectURL;
   const originalRevoke = URL.revokeObjectURL;
@@ -1572,8 +1601,11 @@ it('keeps warning typography and legibility confirmations as separate reviewer c
   try {
     await startManualReview(user);
 
-  const typography = await screen.findByRole('checkbox', {
-    name: /i visually confirmed the warning heading is uppercase and bold/i,
+  const uppercase = await screen.findByRole('checkbox', {
+    name: /printed heading is uppercase/i,
+  });
+  const bold = screen.getByRole('checkbox', {
+    name: /government warning is bold/i,
   });
   const legibility = screen.getByRole('checkbox', {
     name: /i reviewed warning legibility, contrast, and placement\. exact printed type size still needs final regulatory review/i,
@@ -1581,10 +1613,16 @@ it('keeps warning typography and legibility confirmations as separate reviewer c
   const legibilityRow = screen.getByRole('row', { name: /warning legibility/i });
 
   expect(legibilityRow).toHaveTextContent('Needs review');
-  await user.click(typography);
+  await user.click(uppercase);
+
+  expect(uppercase).toBeChecked();
+  expect(bold).not.toBeChecked();
+  expect(legibility).not.toBeChecked();
+
+  await user.click(bold);
   await user.click(legibility);
 
-  expect(typography).toBeChecked();
+  expect(bold).toBeChecked();
   expect(legibility).toBeChecked();
   expect(legibilityRow).toHaveTextContent('Match');
     expect(legibilityRow).toHaveTextContent(
@@ -2051,7 +2089,7 @@ it('keeps the reviewer informed when OCR rejects unexpectedly', async () => {
   expect(screen.queryByRole('table')).not.toBeInTheDocument();
   expect(
     screen.queryByRole('checkbox', {
-      name: /i visually confirmed the warning heading is uppercase and bold/i,
+      name: /printed heading is uppercase/i,
     }),
   ).not.toBeInTheDocument();
 });
@@ -2076,7 +2114,7 @@ it('routes a resolved unreadable OCR result to choose-another-label recovery', a
   expect(screen.queryByRole('table')).not.toBeInTheDocument();
   expect(
     screen.queryByRole('checkbox', {
-      name: /i visually confirmed the warning heading is uppercase and bold/i,
+      name: /printed heading is uppercase/i,
     }),
   ).not.toBeInTheDocument();
 });
@@ -2096,7 +2134,7 @@ it('shows only progress while OCR is still processing', async () => {
   expect(screen.queryByRole('table')).not.toBeInTheDocument();
   expect(
     screen.queryByRole('checkbox', {
-      name: /i visually confirmed the warning heading is uppercase and bold/i,
+      name: /printed heading is uppercase/i,
     }),
   ).not.toBeInTheDocument();
 
