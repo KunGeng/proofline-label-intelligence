@@ -4,8 +4,6 @@
 
 **Primary public deployment:** [main.d4qb8x5x7ay8t.amplifyapp.com](https://main.d4qb8x5x7ay8t.amplifyapp.com/)
 
-**Rollback deployment:** [proofline-label-intelligence.kungeng0803.chatgpt.site](https://proofline-label-intelligence.kungeng0803.chatgpt.site)
-
 **Source repository:** [github.com/KunGeng/proofline-label-intelligence](https://github.com/KunGeng/proofline-label-intelligence)
 
 ## What it does
@@ -249,11 +247,11 @@ The suite covers deterministic validation and warning behavior, parser extractio
 
 ## Deployment
 
-**Release status:** The app is deployed through **AWS Amplify Hosting** at [main.d4qb8x5x7ay8t.amplifyapp.com](https://main.d4qb8x5x7ay8t.amplifyapp.com/). It remains a static, browser-local application; the host serves assets but does not receive label images or application facts from the app. The existing [Sites deployment](https://proofline-label-intelligence.kungeng0803.chatgpt.site) remains available as the **Rollback deployment** during the migration.
+**Release status:** The app is deployed through **AWS Amplify Hosting** at [main.d4qb8x5x7ay8t.amplifyapp.com](https://main.d4qb8x5x7ay8t.amplifyapp.com/). It remains a static, browser-local application; the host serves assets but does not receive label images or application facts from the app.
 
 **AWS Amplify Hosting:** Build from [`amplify.yml`](amplify.yml) and publish `dist/client`. Retain same-origin `ocr/` assets in the published bundle, and do not configure a blanket rewrite while views remain in-memory.
 
-For any static host (including a Sites project), use:
+For a static host, use:
 
 ```bash
 pnpm install --frozen-lockfile
@@ -265,8 +263,6 @@ Configure a conventional static host with:
 - **Build command:** `pnpm build`
 - **Publish directory:** `dist/client`
 - **Runtime requirement:** serve the `public/ocr/` assets copied into `dist/client/ocr/` from the same origin as the application; do not replace them with a third-party OCR CDN.
-
-The rollback Sites deployment packages the complete `dist/` directory because it also includes a small Worker entry at `dist/server/index.js`; its static assets are under `dist/client/`.
 
 After publication, smoke-test a real label upload and the batch template from the deployed origin. Confirm that the network panel contains only static-app/OCR asset loads and no image or application-data upload.
 

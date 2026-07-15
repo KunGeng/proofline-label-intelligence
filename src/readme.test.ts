@@ -127,20 +127,18 @@ describe('submission documentation', () => {
   it('documents the exact verified Amplify release, link roles, and static-host contract', async () => {
     const readme = await readFile('README.md', 'utf8');
     const primaryUrl = 'https://main.d4qb8x5x7ay8t.amplifyapp.com/';
-    const rollbackUrl = 'https://proofline-label-intelligence.kungeng0803.chatgpt.site';
-    const releaseMasthead = [
-      `**Primary public deployment:** [main.d4qb8x5x7ay8t.amplifyapp.com](${primaryUrl})`,
-      '',
-      `**Rollback deployment:** [proofline-label-intelligence.kungeng0803.chatgpt.site](${rollbackUrl})`,
-    ].join('\n');
+    const staleRollbackUrl = 'https://proofline-label-intelligence.kungeng0803.chatgpt.site';
+    const releaseMasthead = `**Primary public deployment:** [main.d4qb8x5x7ay8t.amplifyapp.com](${primaryUrl})`;
 
     expect(readme).toContain(releaseMasthead);
     expect(readme.indexOf(releaseMasthead)).toBeLessThan(readme.indexOf('## What it does'));
+    expect(readme).not.toContain(staleRollbackUrl);
+    expect(readme).not.toMatch(/rollback deployment/i);
     expect(readme).toContain(
       `## Try it in 60 seconds\n\nOn a local build or the [primary public deployment](${primaryUrl}):`,
     );
     expect(readme).toContain(
-      `**Release status:** The app is deployed through **AWS Amplify Hosting** at [main.d4qb8x5x7ay8t.amplifyapp.com](${primaryUrl}). It remains a static, browser-local application; the host serves assets but does not receive label images or application facts from the app. The existing [Sites deployment](${rollbackUrl}) remains available as the **Rollback deployment** during the migration.`,
+      `**Release status:** The app is deployed through **AWS Amplify Hosting** at [main.d4qb8x5x7ay8t.amplifyapp.com](${primaryUrl}). It remains a static, browser-local application; the host serves assets but does not receive label images or application facts from the app.`,
     );
     expect(readme).toContain(
       '**AWS Amplify Hosting:** Build from [`amplify.yml`](amplify.yml) and publish `dist/client`. Retain same-origin `ocr/` assets in the published bundle, and do not configure a blanket rewrite while views remain in-memory.',
