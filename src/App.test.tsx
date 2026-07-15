@@ -90,6 +90,22 @@ const startManualReview = async (user: ReturnType<typeof userEvent.setup>): Prom
   await user.click(await fillManualReviewForm(user));
 };
 
+const expectReviewNextCopyToStayInTextColumn = (region: HTMLElement): void => {
+  const steps = Array.from(region.querySelectorAll('ol > li'));
+
+  expect(steps.length).toBeGreaterThan(0);
+
+  for (const step of steps) {
+    expect(step.children).toHaveLength(1);
+    expect(step.firstElementChild).toHaveClass('review-next__content');
+    expect(
+      Array.from(step.childNodes).filter(
+        (node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim(),
+      ),
+    ).toHaveLength(0);
+  }
+};
+
 const enterManualRecoveryEvidence = async (
   user: ReturnType<typeof userEvent.setup>,
 ): Promise<void> => {
@@ -1414,6 +1430,9 @@ it('orients the fixture-backed demo around the next three review actions', async
   expect(
     screen.getByRole('link', { name: /complete the visual warning checks/i }),
   ).toHaveAttribute('href', '#uppercase-confirmation');
+  expectReviewNextCopyToStayInTextColumn(
+    screen.getByRole('region', { name: /a quick way through this sample/i }),
+  );
   expect(
     screen.getByText(/precomputed fixture — not a live OCR timing result/i),
   ).toBeInTheDocument();
@@ -1454,6 +1473,9 @@ it('labels a manual review with next reviewer actions', async () => {
   expect(
     screen.queryByRole('heading', { name: /a quick way through this sample/i }),
   ).not.toBeInTheDocument();
+  expectReviewNextCopyToStayInTextColumn(
+    screen.getByRole('region', { name: /next reviewer actions/i }),
+  );
 });
 
 it('opens preserved manual evidence review for a deadline result and focuses its disclosure', async () => {

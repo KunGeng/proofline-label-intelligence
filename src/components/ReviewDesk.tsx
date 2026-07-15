@@ -563,34 +563,44 @@ export function ReviewDesk({
         {isGuidedDemo ? (
           <ol>
             <li>
-              <a href="#raw-evidence">Inspect the fixture text</a> to see the text this sample
-              preserves as precomputed evidence.
+              <span className="review-next__content">
+                <a href="#raw-evidence">Inspect the fixture text</a> to see the text this sample
+                preserves as precomputed evidence.
+              </span>
             </li>
             <li>
-              <a href="#field-comparison">Inspect the field comparison</a> to compare the
-              application record with each label candidate.
+              <span className="review-next__content">
+                <a href="#field-comparison">Inspect the field comparison</a> to compare the
+                application record with each label candidate.
+              </span>
             </li>
             <li>
-              <a href="#uppercase-confirmation">Complete the visual warning checks</a> on
-              the label preview. Text extraction cannot make that confirmation.
+              <span className="review-next__content">
+                <a href="#uppercase-confirmation">Complete the visual warning checks</a> on
+                the label preview. Text extraction cannot make that confirmation.
+              </span>
             </li>
           </ol>
         ) : outstandingFields.length ? (
           <ol>
             {outstandingFields.map((field) => (
               <li key={field.field}>
-                <a href={taskTargetFor(field.field)}>
-                  Review {fieldLabel(field.field)}
-                </a>
-                : {field.reason}
+                <span className="review-next__content">
+                  <a href={taskTargetFor(field.field)}>
+                    Review {fieldLabel(field.field)}
+                  </a>
+                  : {field.reason}
+                </span>
               </li>
             ))}
           </ol>
         ) : (
           <ol>
             <li>
-              <a href="#field-comparison">Review the field comparison</a>, then record an
-              agent decision. A clean comparison is not approval.
+              <span className="review-next__content">
+                <a href="#field-comparison">Review the field comparison</a>, then record an
+                agent decision. A clean comparison is not approval.
+              </span>
             </li>
           </ol>
         )}

@@ -1104,6 +1104,10 @@ input:not([type="checkbox"]):not([type="file"])[aria-invalid="true"] {
   counter-increment: review-next;
 }
 
+.review-next__content {
+  min-width: 0;
+}
+
 .review-next li::before {
   display: grid;
   width: 24px;
