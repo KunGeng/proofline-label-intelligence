@@ -73,7 +73,8 @@ const previewUrlFor = (file: File): string | undefined => {
 };
 
 const emptyReviewFlags: ReviewFlags = {
-  warningTypographyConfirmed: false,
+  warningUppercaseConfirmed: false,
+  warningBoldConfirmed: false,
   warningLegibilityConfirmed: false,
 };
 
@@ -378,9 +379,11 @@ export function App({ initialBatchItems }: AppProps) {
               extraction: review.extraction,
               flags: {
                 ...emptyReviewFlags,
-                warningTypographyConfirmed,
+                warningUppercaseConfirmed: warningTypographyConfirmed,
+                warningBoldConfirmed: warningTypographyConfirmed,
                 warningLegibilityConfirmed,
               },
+              hasVisualEvidence: Boolean(review.imageUrl || review.evidencePreview),
             })
           : undefined;
 

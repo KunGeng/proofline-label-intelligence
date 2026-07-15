@@ -290,7 +290,10 @@ const statusFor = (item: QueueItem) => {
   );
 };
 
-const revalidateItem = (item: QueueItem): void => {
+const revalidateItem = (
+  item: QueueItem,
+  hasVisualEvidence: boolean,
+): void => {
   if (!item.application) {
     return;
   }
@@ -299,6 +302,7 @@ const revalidateItem = (item: QueueItem): void => {
     application: item.application,
     extraction: item.extraction ?? {},
     flags: item.reviewFlags,
+    hasVisualEvidence,
   });
 };
 
@@ -306,9 +310,16 @@ interface BatchFullReviewProps {
   item: QueueItem;
   onBack: () => void;
   onRetry: (id: string) => void;
-  onCorrectCandidate: (field: CandidateField, value: string) => void;
-  onClearCandidate: (field: CandidateField) => void;
-  onUpdateFlags: (flags: Partial<ReviewFlags>) => void;
+  onCorrectCandidate: (
+    field: CandidateField,
+    value: string,
+    hasVisualEvidence: boolean,
+  ) => void;
+  onClearCandidate: (field: CandidateField, hasVisualEvidence: boolean) => void;
+  onUpdateFlags: (
+    flags: Partial<ReviewFlags>,
+    hasVisualEvidence: boolean,
+  ) => void;
 }
 
 function BatchFullReview({
@@ -345,11 +356,13 @@ function BatchFullReview({
     };
   }, [item.file]);
 
+  const hasVisualEvidence = Boolean(imageUrl);
   const displayResult = item.application
-    ? item.result ?? validateLabel({
+    ? validateLabel({
         application: item.application,
         extraction: item.extraction ?? {},
         flags: item.reviewFlags,
+        hasVisualEvidence,
       })
     : undefined;
   const deadlineDisclosure = item.isManualEvidence && item.status === 'manual_review_required'
@@ -383,16 +396,27 @@ function BatchFullReview({
           onRetry(item.id);
           onBack();
         }}
-        warningTypographyConfirmed={item.reviewFlags.warningTypographyConfirmed}
+        warningTypographyConfirmed={
+          item.reviewFlags.warningUppercaseConfirmed &&
+          item.reviewFlags.warningBoldConfirmed
+        }
         onWarningTypographyConfirmed={(confirmed) =>
-          onUpdateFlags({ warningTypographyConfirmed: confirmed })
+          onUpdateFlags(
+            {
+              warningUppercaseConfirmed: confirmed,
+              warningBoldConfirmed: confirmed,
+            },
+            hasVisualEvidence,
+          )
         }
         warningLegibilityConfirmed={item.reviewFlags.warningLegibilityConfirmed}
         onWarningLegibilityConfirmed={(confirmed) =>
-          onUpdateFlags({ warningLegibilityConfirmed: confirmed })
+          onUpdateFlags({ warningLegibilityConfirmed: confirmed }, hasVisualEvidence)
         }
-        onCorrectCandidate={onCorrectCandidate}
-        onClearCandidate={onClearCandidate}
+        onCorrectCandidate={(field, value) =>
+          onCorrectCandidate(field, value, hasVisualEvidence)
+        }
+        onClearCandidate={(field) => onClearCandidate(field, hasVisualEvidence)}
         exitLabel="Back to batch"
         onExit={onBack}
       />
@@ -662,7 +686,11 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
   };
 
   const updateBatchCandidate = useCallback(
-    (field: CandidateField, value: string): void => {
+    (
+      field: CandidateField,
+      value: string,
+      hasVisualEvidence: boolean,
+    ): void => {
       const itemId = fullReviewItemId;
       if (!itemId) {
         return;
@@ -676,7 +704,7 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
 
         item.extraction = setManualCandidate(item.extraction ?? {}, field, value);
         item.manualEvidenceLocks = { ...item.manualEvidenceLocks, [field]: true };
-        revalidateItem(item);
+        revalidateItem(item, hasVisualEvidence);
 
         return [...current];
       });
@@ -685,7 +713,7 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
   );
 
   const clearBatchCandidate = useCallback(
-    (field: CandidateField): void => {
+    (field: CandidateField, hasVisualEvidence: boolean): void => {
       const itemId = fullReviewItemId;
       if (!itemId) {
         return;
@@ -699,7 +727,7 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
 
         item.extraction = clearManualCandidate(item.extraction ?? {}, field);
         item.manualEvidenceLocks = { ...item.manualEvidenceLocks, [field]: true };
-        revalidateItem(item);
+        revalidateItem(item, hasVisualEvidence);
 
         return [...current];
       });
@@ -708,7 +736,7 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
   );
 
   const updateBatchReviewFlags = useCallback(
-    (flags: Partial<ReviewFlags>): void => {
+    (flags: Partial<ReviewFlags>, hasVisualEvidence: boolean): void => {
       const itemId = fullReviewItemId;
       if (!itemId) {
         return;
@@ -721,7 +749,7 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
         }
 
         item.reviewFlags = { ...item.reviewFlags, ...flags };
-        revalidateItem(item);
+        revalidateItem(item, hasVisualEvidence);
 
         return [...current];
       });

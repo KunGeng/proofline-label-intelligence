@@ -2,6 +2,7 @@ import {
   CANONICAL_WARNING_BODY,
   CANONICAL_WARNING_HEADING,
 } from './constants';
+import { getBeverageProfile } from './beverageProfiles';
 import {
   canonicalizeText,
   parseAbv,
@@ -298,6 +299,16 @@ const abvProofConsistencyField = (
   );
 };
 
+const alcoholContentRequirementField = (candidate?: Candidate): FieldResult =>
+  derivedField(
+    'alcoholContentRequirement',
+    'needs_review',
+    'Manual alcohol-content requirement review',
+    candidate?.value.trim() || 'No declared ABV',
+    'This beer or wine record requires an agent to confirm whether alcohol content must appear on this label.',
+    candidate?.confidence,
+  );
+
 const normalizeWarningWhitespace = (value: string): string =>
   value.replace(/\s+/g, ' ').trim();
 
@@ -371,24 +382,61 @@ const warningHeadingField = (candidate?: Candidate): FieldResult => {
   );
 };
 
-const warningTypographyField = (confirmed: boolean): FieldResult => ({
-  field: 'warningTypography',
-  state: confirmed ? 'match' : 'needs_review',
+const warningUppercaseField = (
+  confirmed: boolean,
+  hasVisualEvidence: boolean,
+): FieldResult => ({
+  field: 'warningUppercase',
+  state: confirmed && hasVisualEvidence ? 'match' : 'needs_review',
   expected: 'Agent confirmation required',
-  observed: confirmed ? 'Agent-confirmed' : 'Awaiting agent confirmation',
-  reason: confirmed
-    ? 'An agent confirmed the warning typography.'
-    : 'Warning typography requires explicit agent confirmation.',
+  observed: confirmed && hasVisualEvidence
+    ? 'Agent-confirmed'
+    : hasVisualEvidence
+      ? 'Awaiting agent confirmation'
+      : 'No visual evidence available',
+  reason: confirmed && hasVisualEvidence
+    ? 'An agent confirmed the warning heading is uppercase.'
+    : hasVisualEvidence
+      ? 'Warning-heading uppercase requires explicit agent confirmation.'
+      : 'Warning-heading uppercase requires visual evidence and explicit agent confirmation.',
 });
 
-const warningLegibilityField = (confirmed: boolean): FieldResult => ({
-  field: 'warningLegibility',
-  state: confirmed ? 'match' : 'needs_review',
+const warningBoldField = (
+  confirmed: boolean,
+  hasVisualEvidence: boolean,
+): FieldResult => ({
+  field: 'warningBold',
+  state: confirmed && hasVisualEvidence ? 'match' : 'needs_review',
   expected: 'Agent confirmation required',
-  observed: confirmed ? 'Agent-confirmed' : 'Awaiting agent confirmation',
-  reason: confirmed
+  observed: confirmed && hasVisualEvidence
+    ? 'Agent-confirmed'
+    : hasVisualEvidence
+      ? 'Awaiting agent confirmation'
+      : 'No visual evidence available',
+  reason: confirmed && hasVisualEvidence
+    ? 'An agent confirmed the warning heading is bold.'
+    : hasVisualEvidence
+      ? 'Warning-heading boldness requires explicit agent confirmation.'
+      : 'Warning-heading boldness requires visual evidence and explicit agent confirmation.',
+});
+
+const warningLegibilityField = (
+  confirmed: boolean,
+  hasVisualEvidence: boolean,
+): FieldResult => ({
+  field: 'warningLegibility',
+  state: confirmed && hasVisualEvidence ? 'match' : 'needs_review',
+  expected: 'Agent confirmation required',
+  observed: confirmed && hasVisualEvidence
+    ? 'Agent-confirmed'
+    : hasVisualEvidence
+      ? 'Awaiting agent confirmation'
+      : 'No visual evidence available',
+  reason: confirmed && hasVisualEvidence
     ? 'An agent reviewed warning legibility, contrast, and placement.'
-    : 'Warning legibility, contrast, and placement require explicit agent confirmation.',
+    : hasVisualEvidence
+      ? 'Warning legibility, contrast, and placement require explicit agent confirmation.'
+      : 'Warning legibility, contrast, and placement require visual evidence and explicit agent confirmation.',
 });
 
 const countryOfOriginField = (
@@ -454,21 +502,39 @@ const overallState = (fields: FieldResult[]): ReviewState => {
 };
 
 export const validateLabel = (input: ValidationInput): VerificationResult => {
-  const { application, extraction, flags } = input;
+  const {
+    application,
+    extraction,
+    flags,
+    hasVisualEvidence,
+  } = input;
+  const profile = getBeverageProfile(application.beverageType);
+  const alcoholContentFields = application.alcoholContentExpectation === 'manual_review'
+    ? [
+        alcoholContentRequirementField(
+          application.abv?.trim() ? extraction.abv : undefined,
+        ),
+      ]
+    : [numericField('abv', application.abv ?? '', extraction.abv, parseAbv)];
+  const proofFields = profile.supportsProof
+    ? [
+        application.proof?.trim()
+          ? numericField('proof', application.proof, extraction.proof, parseProof)
+          : withCandidate(
+              'proof',
+              'match',
+              'Not provided in application',
+              extraction.proof,
+              'Proof is not provided in the application.',
+            ),
+        abvProofConsistencyField(application, extraction),
+      ]
+    : [];
   const fields: FieldResult[] = [
     textField('brandName', application.brandName, extraction.brandName),
     textField('classType', application.classType, extraction.classType),
-    numericField('abv', application.abv, extraction.abv, parseAbv),
-    application.proof?.trim()
-      ? numericField('proof', application.proof, extraction.proof, parseProof)
-      : withCandidate(
-          'proof',
-          'match',
-          'Not provided in application',
-          extraction.proof,
-          'Proof is not provided in the application.',
-        ),
-    abvProofConsistencyField(application, extraction),
+    ...alcoholContentFields,
+    ...proofFields,
     numericField(
       'netContents',
       application.netContents,
@@ -483,8 +549,9 @@ export const validateLabel = (input: ValidationInput): VerificationResult => {
     countryOfOriginField(input),
     warningBodyField(extraction.warningText),
     warningHeadingField(extraction.warningHeading),
-    warningTypographyField(flags.warningTypographyConfirmed),
-    warningLegibilityField(flags.warningLegibilityConfirmed),
+    warningUppercaseField(flags.warningUppercaseConfirmed, hasVisualEvidence),
+    warningBoldField(flags.warningBoldConfirmed, hasVisualEvidence),
+    warningLegibilityField(flags.warningLegibilityConfirmed, hasVisualEvidence),
   ];
 
   return { fields, overallState: overallState(fields) };

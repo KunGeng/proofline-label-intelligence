@@ -84,7 +84,8 @@ const enterManualRecoveryEvidence = async (
 };
 
 const emptyReviewFlags = (): ReviewFlags => ({
-  warningTypographyConfirmed: false,
+  warningUppercaseConfirmed: false,
+  warningBoldConfirmed: false,
   warningLegibilityConfirmed: false,
 });
 
@@ -133,6 +134,8 @@ const ocrCandidate = (value: string, rawText = value): Candidate => ({
 });
 
 const batchApplication: ApplicationData = {
+  beverageType: 'distilled_spirits',
+  alcoholContentExpectation: 'declared',
   brandName: 'OLD TOM',
   classType: 'Bourbon Whiskey',
   abv: '45%',
@@ -170,7 +173,12 @@ const readyBatchItem = (name = 'ready.png'): QueueItem => {
     extraction,
     rawText: 'OLD TOM FROM OCR',
     source: 'ocr',
-    result: validateLabel({ application, extraction, flags: reviewFlags }),
+    result: validateLabel({
+      application,
+      extraction,
+      flags: reviewFlags,
+      hasVisualEvidence: true,
+    }),
   };
 };
 

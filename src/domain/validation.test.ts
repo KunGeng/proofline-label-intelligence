@@ -31,19 +31,23 @@ const candidate = (
 ): Candidate => ({ value, rawText: value, confidence, source });
 
 const confirmedReviewFlags = {
-  warningTypographyConfirmed: true,
+  warningUppercaseConfirmed: true,
+  warningBoldConfirmed: true,
   warningLegibilityConfirmed: true,
 };
 
 const fixture = (
   overrides: Partial<LabelExtraction> = {},
   flags = {
-    warningTypographyConfirmed: false,
+    warningUppercaseConfirmed: false,
+    warningBoldConfirmed: false,
     warningLegibilityConfirmed: false,
   },
   applicationOverrides: Partial<ValidationInput['application']> = {},
 ): ValidationInput => ({
   application: {
+    beverageType: 'distilled_spirits',
+    alcoholContentExpectation: 'declared',
     brandName: "Stone's Throw",
     classType: 'Bourbon Whiskey',
     abv: '45%',
@@ -65,6 +69,7 @@ const fixture = (
     ...overrides,
   },
   flags,
+  hasVisualEvidence: true,
 });
 
 const byField = (result: VerificationResult, field: FieldKey) =>
@@ -73,7 +78,10 @@ const byField = (result: VerificationResult, field: FieldKey) =>
 describe('normalization helpers', () => {
   it('normalizes only the supported textual variations', () => {
     expect(fieldLabel('warningHeading')).toBe('Warning heading');
+    expect(fieldLabel('warningUppercase')).toBe('Warning uppercase');
+    expect(fieldLabel('warningBold')).toBe('Warning bold');
     expect(fieldLabel('warningLegibility')).toBe('Warning legibility');
+    expect(fieldLabel('alcoholContentRequirement')).toBe('Alcohol-content requirement');
     expect(fieldLabel('abvProofConsistency')).toBe('ABV/proof consistency');
     expect(canonicalizeText(" Stone’s-Throw, LLC. ")).toBe('stones throw llc');
     expect(canonicalizeText('ＦＯＯ')).not.toBe(canonicalizeText('foo'));
@@ -105,7 +113,10 @@ describe('validateLabel', () => {
       state: 'match',
       expected: CANONICAL_WARNING_HEADING,
     });
-    expect(byField(result, 'warningTypography')).toMatchObject({
+    expect(byField(result, 'warningUppercase')).toMatchObject({
+      state: 'needs_review',
+    });
+    expect(byField(result, 'warningBold')).toMatchObject({
       state: 'needs_review',
     });
     expect(byField(result, 'warningLegibility')).toMatchObject({
@@ -235,6 +246,33 @@ describe('validateLabel', () => {
     expect(result.overallState).toBe('match');
   });
 
+  it('does not emit proof findings for a beer profile', () => {
+    const result = validateLabel(fixture({}, confirmedReviewFlags, {
+      beverageType: 'beer',
+      classType: 'India Pale Ale',
+      proof: undefined,
+    }));
+
+    expect(result.fields.map((field) => field.field)).not.toContain('proof');
+    expect(result.fields.map((field) => field.field))
+      .not.toContain('abvProofConsistency');
+  });
+
+  it('keeps beer or wine alcohol-content exceptions in human review', () => {
+    const result = validateLabel(fixture({}, confirmedReviewFlags, {
+      beverageType: 'wine',
+      classType: 'Cabernet Sauvignon',
+      alcoholContentExpectation: 'manual_review',
+      abv: undefined,
+      proof: undefined,
+    }));
+
+    expect(byField(result, 'alcoholContentRequirement')).toMatchObject({
+      state: 'needs_review',
+      observed: 'No declared ABV',
+    });
+  });
+
   it('accepts numerically equivalent net contents expressed in liters', () => {
     const result = validateLabel(fixture({ netContents: candidate('0.75 L') }));
 
@@ -298,14 +336,18 @@ describe('validateLabel', () => {
     expect(result.overallState).toBe('unreadable');
   });
 
-  it('detects a title-cased warning heading as a mismatch', () => {
+  it('keeps a title-cased warning heading as a mismatch after all visual confirmations', () => {
     const result = validateLabel(
-      fixture({ warningHeading: candidate('Government Warning:') }),
+      fixture({ warningHeading: candidate('Government Warning:') }, confirmedReviewFlags),
     );
 
     expect(byField(result, 'warningHeading')).toMatchObject({
       state: 'mismatch',
     });
+    expect(byField(result, 'warningUppercase')).toMatchObject({ state: 'match' });
+    expect(byField(result, 'warningBold')).toMatchObject({ state: 'match' });
+    expect(byField(result, 'warningLegibility')).toMatchObject({ state: 'match' });
+    expect(result.overallState).toBe('mismatch');
   });
 
   it('compares the warning body exactly apart from whitespace', () => {
@@ -352,27 +394,43 @@ describe('validateLabel', () => {
     expect(result.overallState).toBe('match');
   });
 
-  it('keeps warning typography in review until an agent confirms it', () => {
-    expect(byField(validateLabel(fixture()), 'warningTypography').state).toBe(
-      'needs_review',
-    );
-    expect(
-      byField(
-        validateLabel(fixture({}, confirmedReviewFlags)),
-        'warningTypography',
-      ).state,
-    ).toBe('match');
+  it('requires independent uppercase and bold confirmation', () => {
+    const result = validateLabel(fixture({}, {
+      warningUppercaseConfirmed: true,
+      warningBoldConfirmed: false,
+      warningLegibilityConfirmed: false,
+    }));
+
+    expect(byField(result, 'warningUppercase')).toMatchObject({ state: 'match' });
+    expect(byField(result, 'warningBold')).toMatchObject({ state: 'needs_review' });
+    expect(byField(result, 'warningLegibility')).toMatchObject({ state: 'needs_review' });
   });
 
   it('requires a separate warning-legibility confirmation', () => {
     const result = validateLabel(fixture({}, {
-      warningTypographyConfirmed: true,
+      warningUppercaseConfirmed: true,
+      warningBoldConfirmed: true,
       warningLegibilityConfirmed: false,
     }));
 
     expect(byField(result, 'warningLegibility')).toMatchObject({
       state: 'needs_review',
     });
+  });
+
+  it('does not let a confirmed visual flag pass without visual evidence', () => {
+    const result = validateLabel({
+      ...fixture({}, {
+        warningUppercaseConfirmed: true,
+        warningBoldConfirmed: true,
+        warningLegibilityConfirmed: true,
+      }),
+      hasVisualEvidence: false,
+    });
+
+    expect(byField(result, 'warningUppercase').state).toBe('needs_review');
+    expect(byField(result, 'warningBold').state).toBe('needs_review');
+    expect(byField(result, 'warningLegibility').state).toBe('needs_review');
   });
 
   it('returns mismatch before unreadable and review states', () => {

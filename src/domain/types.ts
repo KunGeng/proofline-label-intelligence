@@ -1,7 +1,13 @@
+import type {
+  AlcoholContentExpectation,
+  BeverageType,
+} from './beverageProfiles';
+
 export type FieldKey =
   | 'brandName'
   | 'classType'
   | 'abv'
+  | 'alcoholContentRequirement'
   | 'proof'
   | 'abvProofConsistency'
   | 'netContents'
@@ -9,7 +15,8 @@ export type FieldKey =
   | 'countryOfOrigin'
   | 'warningText'
   | 'warningHeading'
-  | 'warningTypography'
+  | 'warningUppercase'
+  | 'warningBold'
   | 'warningLegibility';
 
 export type ReviewState = 'match' | 'mismatch' | 'needs_review' | 'unreadable';
@@ -24,9 +31,11 @@ export interface Candidate {
 }
 
 export interface ApplicationData {
+  beverageType: BeverageType;
+  alcoholContentExpectation: AlcoholContentExpectation;
   brandName: string;
   classType: string;
-  abv: string;
+  abv?: string;
   proof?: string;
   netContents: string;
   producerAddress: string;
@@ -47,7 +56,8 @@ export interface LabelExtraction {
 }
 
 export interface ReviewFlags {
-  warningTypographyConfirmed: boolean;
+  warningUppercaseConfirmed: boolean;
+  warningBoldConfirmed: boolean;
   warningLegibilityConfirmed: boolean;
 }
 
@@ -55,6 +65,7 @@ export interface ValidationInput {
   application: ApplicationData;
   extraction: LabelExtraction;
   flags: ReviewFlags;
+  hasVisualEvidence: boolean;
 }
 
 export interface FieldResult {

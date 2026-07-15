@@ -15,7 +15,8 @@ const MAX_SELECTED_FILES = 300;
 const MAX_CONCURRENT_WORKERS = 2;
 
 const createEmptyReviewFlags = (): ReviewFlags => ({
-  warningTypographyConfirmed: false,
+  warningUppercaseConfirmed: false,
+  warningBoldConfirmed: false,
   warningLegibilityConfirmed: false,
 });
 
@@ -353,6 +354,7 @@ export const createReviewQueue = (
         application: item.application,
         extraction: item.extraction ?? {},
         flags: item.reviewFlags,
+        hasVisualEvidence: Boolean(item.thumbnailUrl),
       });
       item.status = 'ready';
       item.progress = 1;

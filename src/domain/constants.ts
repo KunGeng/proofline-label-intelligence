@@ -11,6 +11,7 @@ const fieldLabels: Record<FieldKey, string> = {
   brandName: 'Brand name',
   classType: 'Class/type',
   abv: 'Alcohol by volume',
+  alcoholContentRequirement: 'Alcohol-content requirement',
   proof: 'Proof',
   abvProofConsistency: 'ABV/proof consistency',
   netContents: 'Net contents',
@@ -18,7 +19,8 @@ const fieldLabels: Record<FieldKey, string> = {
   countryOfOrigin: 'Country of origin',
   warningText: 'Warning text',
   warningHeading: 'Warning heading',
-  warningTypography: 'Warning typography',
+  warningUppercase: 'Warning uppercase',
+  warningBold: 'Warning bold',
   warningLegibility: 'Warning legibility',
 };
 
