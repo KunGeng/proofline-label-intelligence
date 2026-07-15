@@ -242,11 +242,7 @@ const applicationForRow = (
     }
   }
 
-  if (
-    alcoholContentExpectation === 'declared' &&
-    values.abv &&
-    parseAbv(values.abv) === undefined
-  ) {
+  if (values.abv && parseAbv(values.abv) === undefined) {
     errors.push(`Row ${line}: abv is not in the required format.`);
   }
 
@@ -276,7 +272,7 @@ const applicationForRow = (
     alcoholContentExpectation,
     brandName: values.brandName!,
     classType: values.classType!,
-    abv: alcoholContentExpectation === 'declared' ? values.abv! : undefined,
+    abv: values.abv || undefined,
     ...(profile?.supportsProof && values.proof ? { proof: values.proof } : {}),
     netContents: values.netContents!,
     producerAddress: values.producerAddress!,

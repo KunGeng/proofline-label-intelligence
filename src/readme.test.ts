@@ -71,6 +71,14 @@ describe('submission documentation', () => {
     expect(sampleLabel[1]).toBe(0xd8);
   });
 
+  it('documents the required manual-review abv header and cell rules', async () => {
+    const readme = await readFile('README.md', 'utf8');
+
+    expect(readme).toMatch(/`abv` header remains required/i);
+    expect(readme).toMatch(/abv.*may be blank.*manual_review/i);
+    expect(readme).toMatch(/nonblank `abv` cell.*format/i);
+  });
+
   it('includes a local command for inspecting the production build', async () => {
     const packageJson = JSON.parse(await readFile('package.json', 'utf8')) as {
       scripts?: Record<string, string>;

@@ -83,7 +83,7 @@ old-tom-bourbon.jpg,OLD TOM DISTILLERY,Kentucky Straight Bourbon Whiskey,distill
 CSV behavior is intentionally strict:
 
 - `filename` alone is valid for OCR triage; those items are marked **Application data required** rather than compared. Filename-only rows remain OCR triage.
-- If any application-data column is present, the complete application schema is required: `brandName`, `classType`, `beverage_type`, `alcohol_content_expectation`, `netContents`, `producerAddress`, and `isImported`. `abv` is required only when `alcohol_content_expectation` is `declared`; `proof` is available only for `distilled_spirits`, and `countryOfOrigin` remains conditional for imported products.
+- If any application-data column is present, the complete application schema is required: `brandName`, `classType`, `beverage_type`, `alcohol_content_expectation`, `abv`, `netContents`, `producerAddress`, and `isImported`. The `abv` header remains required, but its cell may be blank for `manual_review`; it must be supplied for `declared`. Any nonblank `abv` cell must use a supported numeric format. `proof` is available only for `distilled_spirits`, and `countryOfOrigin` remains conditional for imported products.
 - `beverage_type` must be `distilled_spirits`, `beer`, or `wine`. `alcohol_content_expectation` must be `declared` or `manual_review`, subject to the selected profile.
 - `isImported` must be `true` or `false`; imported rows require `countryOfOrigin`.
 - ABV, proof, and net contents must parse as supported numeric formats. A malformed or partial CSV is rejected rather than silently downgraded.

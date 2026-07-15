@@ -74,19 +74,59 @@ describe('parseBatchCsv', () => {
     });
   });
 
-  it('accepts a wine manual-review row without declared ABV', () => {
+  it.each([
+    ['beer', 'India Pale Ale'],
+    ['wine', 'Cabernet Sauvignon'],
+  ] as const)('accepts a %s manual-review row with a blank abv cell', (beverageType, classType) => {
+    const filename = `manual-${beverageType}.png`;
     const result = parseBatchCsv(
       applicationCsv(
-        'wine.png,ESTATE RED,Cabernet Sauvignon,wine,manual_review,,,750 mL,Example Winery CA,false,',
+        `${filename},ESTATE RED,${classType},${beverageType},manual_review,,,750 mL,Example Winery CA,false,`,
       ),
-      [file('wine.png')],
+      [file(filename)],
     );
 
     expect(result.errors).toEqual([]);
     expect(result.matched[0]?.application).toMatchObject({
-      beverageType: 'wine',
+      beverageType,
       alcoholContentExpectation: 'manual_review',
       abv: undefined,
+    });
+  });
+
+  it.each([
+    ['beer', 'India Pale Ale'],
+    ['wine', 'Cabernet Sauvignon'],
+  ] as const)('rejects a nonblank malformed abv cell for %s manual review', (beverageType, classType) => {
+    const filename = `invalid-manual-${beverageType}.png`;
+    const result = parseBatchCsv(
+      applicationCsv(
+        `${filename},ESTATE RED,${classType},${beverageType},manual_review,not abv,,750 mL,Example Winery CA,false,`,
+      ),
+      [file(filename)],
+    );
+
+    expect(result.errors).toContain('Row 2: abv is not in the required format.');
+    expect(result.matched).toHaveLength(0);
+  });
+
+  it.each([
+    ['beer', 'India Pale Ale', '6.2%'],
+    ['wine', 'Cabernet Sauvignon', '13.5%'],
+  ] as const)('retains a valid nonblank abv cell for %s manual review', (beverageType, classType, abv) => {
+    const filename = `valid-manual-${beverageType}.png`;
+    const result = parseBatchCsv(
+      applicationCsv(
+        `${filename},ESTATE RED,${classType},${beverageType},manual_review,${abv},,750 mL,Example Winery CA,false,`,
+      ),
+      [file(filename)],
+    );
+
+    expect(result.errors).toEqual([]);
+    expect(result.matched[0]?.application).toMatchObject({
+      beverageType,
+      alcoholContentExpectation: 'manual_review',
+      abv,
     });
   });
 
