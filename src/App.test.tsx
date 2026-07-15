@@ -1784,6 +1784,50 @@ it('releases idle OCR workers when leaving a single-label review', async () => {
   expect(releaseOcrWorkers).toHaveBeenCalledTimes(1);
 });
 
+it('aborts an active single-label extraction before releasing OCR workers on unmount', async () => {
+  const user = userEvent.setup();
+  let extractionSignal: AbortSignal | undefined;
+  vi.mocked(releaseOcrWorkers).mockClear();
+  vi.mocked(releaseOcrWorkers).mockImplementation(() => {
+    expect(extractionSignal?.aborted).toBe(true);
+    return Promise.resolve();
+  });
+  vi.mocked(extractFromImage).mockImplementationOnce((_file, _onProgress, options) => {
+    extractionSignal = options?.signal;
+    return new Promise<ExtractionJobResult>((resolve) => {
+      options?.signal?.addEventListener('abort', () => {
+        resolve({
+          outcome: 'cancelled',
+          extraction: {},
+          rawText: '',
+          source: 'ocr',
+          error: 'cancelled',
+        });
+      }, { once: true });
+    });
+  });
+
+  const { unmount } = render(<App />);
+  await user.click(screen.getByRole('button', { name: /review a label/i }));
+  await user.type(screen.getByRole('textbox', { name: /^brand name$/i }), 'Old Tom');
+  await user.type(screen.getByRole('textbox', { name: /class\/type/i }), 'Bourbon Whiskey');
+  await user.type(screen.getByRole('textbox', { name: /alcohol by volume/i }), '45%');
+  await user.type(screen.getByRole('textbox', { name: /net contents/i }), '750 mL');
+  await user.type(screen.getByRole('textbox', { name: /producer address/i }), 'Old Tom, KY');
+  await user.upload(
+    screen.getByLabelText(/^choose label image$/i),
+    new File(['label'], 'old-tom.png', { type: 'image/png' }),
+  );
+  await user.click(screen.getByRole('button', { name: /start evidence review/i }));
+  await waitFor(() => {
+    expect(extractionSignal).toBeDefined();
+  });
+
+  unmount();
+
+  expect(releaseOcrWorkers).toHaveBeenCalledTimes(1);
+});
+
 it('keeps uppercase, bold, and legibility confirmations independently controlled with an image preview', async () => {
   const user = userEvent.setup();
   const originalCreate = URL.createObjectURL;
