@@ -1,8 +1,8 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { EvidenceImageViewer } from './EvidenceImageViewer';
 
-it('opens the supplied local evidence, zooms locally, resets, and restores focus', async () => {
+it('moves focus into supplied local evidence, zooms locally, and restores focus', async () => {
   const user = userEvent.setup();
 
   render(<EvidenceImageViewer src="blob:label" alt="Label evidence: sample" />);
@@ -12,6 +12,10 @@ it('opens the supplied local evidence, zooms locally, resets, and restores focus
   });
   opener.focus();
   await user.click(opener);
+  const close = screen.getByRole('button', { name: /close full-size label evidence/i });
+
+  expect(close).toHaveFocus();
+
   await user.click(screen.getByRole('button', { name: /zoom in/i }));
 
   expect(screen.getByRole('img', { name: /label evidence: sample/i })).toHaveAttribute(
@@ -27,7 +31,7 @@ it('opens the supplied local evidence, zooms locally, resets, and restores focus
     transform: 'scale(1)',
   });
 
-  await user.click(screen.getByRole('button', { name: /close full-size label evidence/i }));
+  await user.click(close);
   expect(
     screen.getByRole('button', { name: /open full-size label evidence/i }),
   ).toHaveFocus();
@@ -35,13 +39,17 @@ it('opens the supplied local evidence, zooms locally, resets, and restores focus
 
 it('keeps zoom within the local 1 to 3 times range and can display supplied fixture evidence', async () => {
   const user = userEvent.setup();
+  const onEvidenceAvailabilityChange = vi.fn();
 
   render(
     <EvidenceImageViewer
       alt="Label evidence: fixture"
       fixture={<p>Existing fixture label evidence</p>}
+      onEvidenceAvailabilityChange={onEvidenceAvailabilityChange}
     />,
   );
+
+  expect(onEvidenceAvailabilityChange).toHaveBeenLastCalledWith(true);
 
   await user.click(
     screen.getByRole('button', { name: /open full-size label evidence/i }),
@@ -57,4 +65,25 @@ it('keeps zoom within the local 1 to 3 times range and can display supplied fixt
   expect(screen.getByText('Existing fixture label evidence').parentElement).toHaveStyle({
     transform: 'scale(3)',
   });
+});
+
+it('reports local image evidence only after it loads and withdraws it after an error', () => {
+  const onEvidenceAvailabilityChange = vi.fn();
+
+  render(
+    <EvidenceImageViewer
+      src="blob:label"
+      alt="Label evidence: sample"
+      onEvidenceAvailabilityChange={onEvidenceAvailabilityChange}
+    />,
+  );
+
+  const image = screen.getByRole('img', { name: /label evidence: sample/i });
+  expect(onEvidenceAvailabilityChange).toHaveBeenLastCalledWith(false);
+
+  fireEvent.load(image);
+  expect(onEvidenceAvailabilityChange).toHaveBeenLastCalledWith(true);
+
+  fireEvent.error(image);
+  expect(onEvidenceAvailabilityChange).toHaveBeenLastCalledWith(false);
 });

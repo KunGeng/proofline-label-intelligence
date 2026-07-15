@@ -9,6 +9,7 @@ interface EvidenceImageViewerProps {
   alt: string;
   imageClassName?: string;
   fixture?: ReactNode;
+  onEvidenceAvailabilityChange?: (available: boolean) => void;
 }
 
 export function EvidenceImageViewer({
@@ -16,18 +17,40 @@ export function EvidenceImageViewer({
   alt,
   imageClassName,
   fixture,
+  onEvidenceAvailabilityChange,
 }: EvidenceImageViewerProps) {
   const [expanded, setExpanded] = useState(false);
   const [zoom, setZoom] = useState(MIN_ZOOM);
+  const [loadedImageSource, setLoadedImageSource] = useState<string>();
   const openerRef = useRef<HTMLButtonElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
   const shouldRestoreFocusRef = useRef(false);
+  const reportedAvailabilityRef = useRef<boolean | undefined>(undefined);
+  const hasFixtureEvidence = Boolean(fixture);
+  const visualEvidenceAvailable = src
+    ? loadedImageSource === src
+    : hasFixtureEvidence;
 
   useEffect(() => {
+    if (expanded) {
+      closeButtonRef.current?.focus();
+      return;
+    }
+
     if (!expanded && shouldRestoreFocusRef.current) {
       openerRef.current?.focus();
       shouldRestoreFocusRef.current = false;
     }
   }, [expanded]);
+
+  useEffect(() => {
+    if (reportedAvailabilityRef.current === visualEvidenceAvailable) {
+      return;
+    }
+
+    reportedAvailabilityRef.current = visualEvidenceAvailable;
+    onEvidenceAvailabilityChange?.(visualEvidenceAvailable);
+  }, [onEvidenceAvailabilityChange, visualEvidenceAvailable]);
 
   const closeExpandedEvidence = (): void => {
     shouldRestoreFocusRef.current = true;
@@ -36,7 +59,13 @@ export function EvidenceImageViewer({
   };
 
   const compactEvidence = src ? (
-    <img className={imageClassName} src={src} alt={alt} />
+    <img
+      className={imageClassName}
+      src={src}
+      alt={alt}
+      onLoad={() => setLoadedImageSource(src)}
+      onError={() => setLoadedImageSource(undefined)}
+    />
   ) : fixture;
   const fullSizeEvidence = src ? (
     <img
@@ -44,6 +73,8 @@ export function EvidenceImageViewer({
       src={src}
       alt={alt}
       style={{ transform: 'scale(' + zoom + ')' }}
+      onLoad={() => setLoadedImageSource(src)}
+      onError={() => setLoadedImageSource(undefined)}
     />
   ) : (
     <div style={{ transform: 'scale(' + zoom + ')' }}>{fixture}</div>
@@ -57,7 +88,12 @@ export function EvidenceImageViewer({
     return (
       <section className="evidence-image-viewer__expanded" aria-label={`Full-size ${alt}`}>
         <div className="evidence-image-viewer__controls">
-          <button type="button" className="text-button" onClick={closeExpandedEvidence}>
+          <button
+            ref={closeButtonRef}
+            type="button"
+            className="text-button"
+            onClick={closeExpandedEvidence}
+          >
             Close full-size label evidence
           </button>
           <div className="evidence-image-viewer__zoom-controls" aria-label="Evidence zoom controls">

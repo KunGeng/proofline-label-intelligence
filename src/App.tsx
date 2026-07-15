@@ -111,6 +111,7 @@ export function App({ initialBatchItems }: AppProps) {
   const [warningUppercaseConfirmed, setWarningUppercaseConfirmed] = useState(false);
   const [warningBoldConfirmed, setWarningBoldConfirmed] = useState(false);
   const [warningLegibilityConfirmed, setWarningLegibilityConfirmed] = useState(false);
+  const [visualEvidenceAvailable, setVisualEvidenceAvailable] = useState(false);
   const extractionRun = useRef(0);
   const extractionAbort = useRef<AbortController | undefined>(undefined);
 
@@ -136,6 +137,7 @@ export function App({ initialBatchItems }: AppProps) {
     setWarningUppercaseConfirmed(false);
     setWarningBoldConfirmed(false);
     setWarningLegibilityConfirmed(false);
+    setVisualEvidenceAvailable(false);
   };
 
   const cancelActiveExtraction = (): void => {
@@ -401,7 +403,7 @@ export function App({ initialBatchItems }: AppProps) {
                 warningBoldConfirmed,
                 warningLegibilityConfirmed,
               },
-              hasVisualEvidence: Boolean(review.imageUrl || review.evidencePreview),
+              hasVisualEvidence: visualEvidenceAvailable,
             })
           : undefined;
 
@@ -415,6 +417,8 @@ export function App({ initialBatchItems }: AppProps) {
           imageUrl={review.imageUrl}
           imageClassName={review.imageClassName}
           evidencePreview={review.evidencePreview}
+          visualEvidenceAvailable={visualEvidenceAvailable}
+          onVisualEvidenceAvailabilityChange={setVisualEvidenceAvailable}
           disclosure={review.disclosure}
           error={review.error}
           progress={review.progress}

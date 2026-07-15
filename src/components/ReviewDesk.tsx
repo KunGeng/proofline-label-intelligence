@@ -36,6 +36,8 @@ interface ReviewDeskProps {
   imageUrl?: string;
   imageClassName?: string;
   evidencePreview?: ReactNode;
+  visualEvidenceAvailable?: boolean;
+  onVisualEvidenceAvailabilityChange?: (available: boolean) => void;
   disclosure?: string;
   error?: string;
   progress?: number;
@@ -122,6 +124,8 @@ export function ReviewDesk({
   imageUrl,
   imageClassName,
   evidencePreview,
+  visualEvidenceAvailable = false,
+  onVisualEvidenceAvailabilityChange,
   disclosure,
   error,
   progress,
@@ -152,7 +156,7 @@ export function ReviewDesk({
   const correctionTriggerRefs = useRef<
     Partial<Record<CandidateField, HTMLButtonElement | null>>
   >({});
-  const hasVisualEvidence = Boolean(imageUrl || evidencePreview);
+  const hasVisualEvidenceSource = Boolean(imageUrl || evidencePreview);
   const warningUppercase = result?.fields.find(
     (field) => field.field === 'warningUppercase',
   );
@@ -334,18 +338,19 @@ export function ReviewDesk({
     ? Math.round(Math.max(0, Math.min(1, progress)) * 100)
     : undefined;
   const confirmationClassName = `checkbox-field checkbox-field--confirmation${
-    hasVisualEvidence ? '' : ' checkbox-field--confirmation-disabled'
+    visualEvidenceAvailable ? '' : ' checkbox-field--confirmation-disabled'
   }`;
 
   const evidenceColumn = (
     <aside className="evidence-column" aria-label="Label evidence">
       <SectionCard title="Label evidence" eyebrow="What the label shows">
-        {hasVisualEvidence ? (
+        {hasVisualEvidenceSource ? (
           <EvidenceImageViewer
             src={imageUrl}
             alt={`Label preview: ${title}`}
             imageClassName={imageClassName}
             fixture={evidencePreview}
+            onEvidenceAvailabilityChange={onVisualEvidenceAvailabilityChange}
           />
         ) : (
           <p className="muted">No preview is available for this label.</p>
@@ -364,8 +369,8 @@ export function ReviewDesk({
           <label className={confirmationClassName}>
             <input
               type="checkbox"
-              checked={hasVisualEvidence && warningUppercaseConfirmed}
-              disabled={!hasVisualEvidence}
+              checked={visualEvidenceAvailable && warningUppercaseConfirmed}
+              disabled={!visualEvidenceAvailable}
               onChange={(event) => onWarningUppercaseConfirmed(event.target.checked)}
             />
             <span>I visually confirmed the printed heading is uppercase.</span>
@@ -381,8 +386,8 @@ export function ReviewDesk({
           <label className={confirmationClassName}>
             <input
               type="checkbox"
-              checked={hasVisualEvidence && warningBoldConfirmed}
-              disabled={!hasVisualEvidence}
+              checked={visualEvidenceAvailable && warningBoldConfirmed}
+              disabled={!visualEvidenceAvailable}
               onChange={(event) => onWarningBoldConfirmed(event.target.checked)}
             />
             <span>
@@ -400,8 +405,8 @@ export function ReviewDesk({
           <label className={confirmationClassName}>
             <input
               type="checkbox"
-              checked={hasVisualEvidence && warningLegibilityConfirmed}
-              disabled={!hasVisualEvidence}
+              checked={visualEvidenceAvailable && warningLegibilityConfirmed}
+              disabled={!visualEvidenceAvailable}
               onChange={(event) => onWarningLegibilityConfirmed(event.target.checked)}
             />
             <span>
@@ -416,7 +421,7 @@ export function ReviewDesk({
             </div>
           ) : null}
         </div>
-        {!hasVisualEvidence ? (
+        {!visualEvidenceAvailable ? (
           <p className="visual-confirmation-unavailable">
             Visual evidence is unavailable, so this confirmation cannot be completed.
           </p>

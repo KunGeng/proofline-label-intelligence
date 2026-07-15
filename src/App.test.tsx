@@ -99,6 +99,12 @@ const enterManualRecoveryEvidence = async (
   );
   await user.click(screen.getByRole('button', { name: /save proof candidate/i }));
   await user.click(screen.getByRole('button', { name: /remove proof evidence/i }));
+  fireEvent.load(await screen.findByRole('img', { name: /label preview: old-tom\.png/i }));
+  await waitFor(() => {
+    expect(
+      screen.getByRole('checkbox', { name: /printed heading is uppercase/i }),
+    ).toBeEnabled();
+  });
   await user.click(
     screen.getByRole('checkbox', { name: /printed heading is uppercase/i }),
   );
@@ -311,6 +317,11 @@ it('opens the title-case warning fixture with the shown warning-heading mismatch
   const legibility = screen.getByRole('checkbox', {
     name: /reviewed warning legibility, contrast, and placement/i,
   });
+  expect(uppercase).toBeEnabled();
+  expect(bold).toBeEnabled();
+  expect(legibility).toBeEnabled();
+  expect(screen.queryByText(/visual evidence is unavailable/i)).not.toBeInTheDocument();
+
   await user.click(uppercase);
   await user.click(bold);
   await user.click(legibility);
@@ -318,6 +329,7 @@ it('opens the title-case warning fixture with the shown warning-heading mismatch
   expect(uppercase).toBeChecked();
   expect(bold).toBeChecked();
   expect(legibility).toBeChecked();
+  expect(screen.getByRole('row', { name: /warning legibility/i })).toHaveTextContent('Match');
   expect(screen.getByRole('row', { name: /^warning heading\b/i })).toHaveTextContent('Mismatch');
 });
 
@@ -903,6 +915,15 @@ it('persists independent batch visual confirmations and preserves the queue filt
     screen.getByRole('button', { name: /open full review for ready\.png/i }),
   );
 
+  fireEvent.load(await screen.findByRole('img', {
+    name: /label preview: ready\.png/i,
+  }));
+  await waitFor(() => {
+    expect(
+      screen.getByRole('checkbox', { name: /government warning is bold/i }),
+    ).toBeEnabled();
+  });
+
   await user.click(
     screen.getByRole('checkbox', {
       name: /government warning is bold/i,
@@ -918,6 +939,14 @@ it('persists independent batch visual confirmations and preserves the queue filt
   await user.click(
     screen.getByRole('button', { name: /open full review for ready\.png/i }),
   );
+  fireEvent.load(await screen.findByRole('img', {
+    name: /label preview: ready\.png/i,
+  }));
+  await waitFor(() => {
+    expect(
+      screen.getByRole('checkbox', { name: /government warning is bold/i }),
+    ).toBeEnabled();
+  });
   expect(
     screen.getByRole('checkbox', { name: /government warning is bold/i }),
   ).toBeChecked();
@@ -940,6 +969,77 @@ it('persists independent batch visual confirmations and preserves the queue filt
   await user.selectOptions(screen.getByLabelText(/^show$/i), 'match');
   expect(screen.getByRole('row', { name: /ready\.png/i })).toHaveTextContent('Match');
     expect(extractFromImage).not.toHaveBeenCalled();
+  } finally {
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: originalCreate,
+    });
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: originalRevoke,
+    });
+  }
+});
+
+it('revalidates batch visual confirmations when local evidence fails to render', async () => {
+  const user = userEvent.setup();
+  const item = readyBatchItem();
+  item.reviewFlags = {
+    warningUppercaseConfirmed: true,
+    warningBoldConfirmed: true,
+    warningLegibilityConfirmed: true,
+  };
+  item.result = validateLabel({
+    application: item.application!,
+    extraction: item.extraction!,
+    flags: item.reviewFlags,
+    hasVisualEvidence: true,
+  });
+
+  const originalCreate = URL.createObjectURL;
+  const originalRevoke = URL.revokeObjectURL;
+  Object.defineProperty(URL, 'createObjectURL', {
+    configurable: true,
+    value: vi.fn(() => 'blob:batch-render-error'),
+  });
+  Object.defineProperty(URL, 'revokeObjectURL', {
+    configurable: true,
+    value: vi.fn(),
+  });
+
+  try {
+    render(<App initialBatchItems={[item]} />);
+
+    await user.click(
+      screen.getByRole('button', { name: /open full review for ready\.png/i }),
+    );
+
+    const evidenceImage = await screen.findByRole('img', {
+      name: /label preview: ready\.png/i,
+    });
+    const uppercase = screen.getByRole('checkbox', {
+      name: /printed heading is uppercase/i,
+    });
+
+    expect(uppercase).toBeDisabled();
+
+    fireEvent.load(evidenceImage);
+    await waitFor(() => expect(uppercase).toBeEnabled());
+    expect(screen.getByRole('row', { name: /warning legibility/i })).toHaveTextContent('Match');
+
+    fireEvent.error(evidenceImage);
+    await waitFor(() => expect(uppercase).toBeDisabled());
+    expect(screen.getByText(/visual evidence is unavailable/i)).toBeInTheDocument();
+    expect(screen.getByRole('row', { name: /warning legibility/i })).toHaveTextContent(
+      'Needs review',
+    );
+    expect(screen.getByRole('row', { name: /warning legibility/i })).toHaveTextContent(
+      'require visual evidence',
+    );
+
+    await user.click(screen.getByRole('button', { name: /back to batch/i }));
+    const row = screen.getByRole('row', { name: /ready\.png/i });
+    expect(within(row).getAllByRole('cell')[3]).toHaveTextContent('3');
   } finally {
     Object.defineProperty(URL, 'createObjectURL', {
       configurable: true,
@@ -1456,7 +1556,12 @@ it('keeps manual evidence editable when a deadline retry returns an ordinary OCR
   expect(await screen.findByRole('alert')).toHaveTextContent(
     /OCR retry failed.*manual evidence remains editable/i,
   );
-  expect(screen.getByRole('img', { name: /label preview: old-tom\.png/i })).toBeInTheDocument();
+  fireEvent.load(screen.getByRole('img', { name: /label preview: old-tom\.png/i }));
+  await waitFor(() => {
+    expect(
+      screen.getByRole('checkbox', { name: /printed heading is uppercase/i }),
+    ).toBeChecked();
+  });
   expect(screen.getByText('HUMAN BRAND')).toBeInTheDocument();
   expect(screen.queryByText('90 Proof')).not.toBeInTheDocument();
   expect(screen.getByRole('checkbox', { name: /printed heading is uppercase/i })).toBeChecked();
@@ -1488,7 +1593,12 @@ it('keeps manual evidence editable when a deadline retry rejects', async () => {
   expect(await screen.findByRole('alert')).toHaveTextContent(
     /OCR retry failed.*manual evidence remains editable/i,
   );
-  expect(screen.getByRole('img', { name: /label preview: old-tom\.png/i })).toBeInTheDocument();
+  fireEvent.load(screen.getByRole('img', { name: /label preview: old-tom\.png/i }));
+  await waitFor(() => {
+    expect(
+      screen.getByRole('checkbox', { name: /printed heading is uppercase/i }),
+    ).toBeChecked();
+  });
   expect(screen.getByText('HUMAN BRAND')).toBeInTheDocument();
   expect(screen.queryByText('90 Proof')).not.toBeInTheDocument();
   expect(screen.getByRole('checkbox', { name: /printed heading is uppercase/i })).toBeChecked();
@@ -1601,33 +1711,54 @@ it('keeps uppercase, bold, and legibility confirmations independently controlled
   try {
     await startManualReview(user);
 
-  const uppercase = await screen.findByRole('checkbox', {
-    name: /printed heading is uppercase/i,
-  });
-  const bold = screen.getByRole('checkbox', {
-    name: /government warning is bold/i,
-  });
-  const legibility = screen.getByRole('checkbox', {
-    name: /i reviewed warning legibility, contrast, and placement\. exact printed type size still needs final regulatory review/i,
-  });
-  const legibilityRow = screen.getByRole('row', { name: /warning legibility/i });
+    const evidenceImage = await screen.findByRole('img', {
+      name: /label preview: old-tom\.png/i,
+    });
+    const uppercase = screen.getByRole('checkbox', {
+      name: /printed heading is uppercase/i,
+    });
+    const bold = screen.getByRole('checkbox', {
+      name: /government warning is bold/i,
+    });
+    const legibility = screen.getByRole('checkbox', {
+      name: /i reviewed warning legibility, contrast, and placement\. exact printed type size still needs final regulatory review/i,
+    });
+    const legibilityRow = screen.getByRole('row', { name: /warning legibility/i });
 
-  expect(legibilityRow).toHaveTextContent('Needs review');
-  await user.click(uppercase);
+    expect(uppercase).toBeDisabled();
+    expect(bold).toBeDisabled();
+    expect(legibility).toBeDisabled();
 
-  expect(uppercase).toBeChecked();
-  expect(bold).not.toBeChecked();
-  expect(legibility).not.toBeChecked();
+    fireEvent.load(evidenceImage);
+    await waitFor(() => expect(uppercase).toBeEnabled());
 
-  await user.click(bold);
-  await user.click(legibility);
+    expect(legibilityRow).toHaveTextContent('Needs review');
+    await user.click(uppercase);
 
-  expect(bold).toBeChecked();
-  expect(legibility).toBeChecked();
-  expect(legibilityRow).toHaveTextContent('Match');
+    expect(uppercase).toBeChecked();
+    expect(bold).not.toBeChecked();
+    expect(legibility).not.toBeChecked();
+
+    await user.click(bold);
+    await user.click(legibility);
+
+    expect(bold).toBeChecked();
+    expect(legibility).toBeChecked();
+    expect(legibilityRow).toHaveTextContent('Match');
     expect(legibilityRow).toHaveTextContent(
       'An agent reviewed warning legibility, contrast, and placement.',
     );
+
+    fireEvent.error(evidenceImage);
+    await waitFor(() => expect(uppercase).toBeDisabled());
+    expect(bold).toBeDisabled();
+    expect(legibility).toBeDisabled();
+    expect(uppercase).not.toBeChecked();
+    expect(bold).not.toBeChecked();
+    expect(legibility).not.toBeChecked();
+    expect(legibilityRow).toHaveTextContent('Needs review');
+    expect(legibilityRow).toHaveTextContent('require visual evidence');
+    expect(screen.getByText(/visual evidence is unavailable/i)).toBeInTheDocument();
   } finally {
     Object.defineProperty(URL, 'createObjectURL', {
       configurable: true,

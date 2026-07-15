@@ -313,6 +313,7 @@ interface BatchFullReviewProps {
     flags: Partial<ReviewFlags>,
     hasVisualEvidence: boolean,
   ) => void;
+  onVisualEvidenceAvailabilityChange: (hasVisualEvidence: boolean) => void;
 }
 
 function BatchFullReview({
@@ -322,10 +323,14 @@ function BatchFullReview({
   onCorrectCandidate,
   onClearCandidate,
   onUpdateFlags,
+  onVisualEvidenceAvailabilityChange,
 }: BatchFullReviewProps) {
   const [imageUrl, setImageUrl] = useState<string>();
+  const [visualEvidenceAvailable, setVisualEvidenceAvailable] = useState(false);
 
   useEffect(() => {
+    setVisualEvidenceAvailable(false);
+
     if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') {
       setImageUrl(undefined);
       return;
@@ -349,13 +354,17 @@ function BatchFullReview({
     };
   }, [item.file]);
 
-  const hasVisualEvidence = Boolean(imageUrl);
+  const handleVisualEvidenceAvailabilityChange = useCallback((available: boolean): void => {
+    setVisualEvidenceAvailable(available);
+    onVisualEvidenceAvailabilityChange(available);
+  }, [onVisualEvidenceAvailabilityChange]);
+
   const displayResult = item.application
     ? validateLabel({
         application: item.application,
         extraction: item.extraction ?? {},
         flags: item.reviewFlags,
-        hasVisualEvidence,
+        hasVisualEvidence: visualEvidenceAvailable,
       })
     : undefined;
   const manualRecoveryDisclosure = item.isManualEvidence && item.status === 'manual_review_required'
@@ -378,6 +387,8 @@ function BatchFullReview({
         phase="ready"
         rawText={item.rawText ?? ''}
         imageUrl={imageUrl}
+        visualEvidenceAvailable={visualEvidenceAvailable}
+        onVisualEvidenceAvailabilityChange={handleVisualEvidenceAvailabilityChange}
         disclosure={manualRecoveryDisclosure}
         error={retryError}
         durationMs={durationMs}
@@ -391,20 +402,20 @@ function BatchFullReview({
         }}
         warningUppercaseConfirmed={item.reviewFlags.warningUppercaseConfirmed}
         onWarningUppercaseConfirmed={(confirmed) =>
-          onUpdateFlags({ warningUppercaseConfirmed: confirmed }, hasVisualEvidence)
+          onUpdateFlags({ warningUppercaseConfirmed: confirmed }, visualEvidenceAvailable)
         }
         warningBoldConfirmed={item.reviewFlags.warningBoldConfirmed}
         onWarningBoldConfirmed={(confirmed) =>
-          onUpdateFlags({ warningBoldConfirmed: confirmed }, hasVisualEvidence)
+          onUpdateFlags({ warningBoldConfirmed: confirmed }, visualEvidenceAvailable)
         }
         warningLegibilityConfirmed={item.reviewFlags.warningLegibilityConfirmed}
         onWarningLegibilityConfirmed={(confirmed) =>
-          onUpdateFlags({ warningLegibilityConfirmed: confirmed }, hasVisualEvidence)
+          onUpdateFlags({ warningLegibilityConfirmed: confirmed }, visualEvidenceAvailable)
         }
         onCorrectCandidate={(field, value) =>
-          onCorrectCandidate(field, value, hasVisualEvidence)
+          onCorrectCandidate(field, value, visualEvidenceAvailable)
         }
-        onClearCandidate={(field) => onClearCandidate(field, hasVisualEvidence)}
+        onClearCandidate={(field) => onClearCandidate(field, visualEvidenceAvailable)}
         exitLabel="Back to batch"
         onExit={onBack}
       />
@@ -764,6 +775,27 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
     [fullReviewItemId],
   );
 
+  const updateBatchVisualEvidenceAvailability = useCallback(
+    (hasVisualEvidence: boolean): void => {
+      const itemId = fullReviewItemId;
+      if (!itemId) {
+        return;
+      }
+
+      setItems((current) => {
+        const item = current.find((candidate) => candidate.id === itemId);
+        if (!item) {
+          return current;
+        }
+
+        revalidateItem(item, hasVisualEvidence);
+
+        return [...current];
+      });
+    },
+    [fullReviewItemId],
+  );
+
   const openFullReview = (id: string): void => {
     setReturnFocusTarget(undefined);
     setFullReviewItemId(id);
@@ -864,6 +896,7 @@ export function BatchQueue({ initialItems }: BatchQueueProps) {
         onCorrectCandidate={updateBatchCandidate}
         onClearCandidate={clearBatchCandidate}
         onUpdateFlags={updateBatchReviewFlags}
+        onVisualEvidenceAvailabilityChange={updateBatchVisualEvidenceAvailability}
       />
     );
   }
