@@ -59,6 +59,26 @@ pnpm preview
 
 If OCR assets ever need to be refreshed after a dependency update, run `pnpm sync:ocr-assets` and commit the resulting files under `public/ocr/` so production remains self-contained.
 
+## Approach, tools, and assumptions
+
+**Approach.** Proofline is a static, browser-local evidence-review workflow: it
+reads a label with local OCR, preserves the OCR evidence, compares it against
+declared facts with deterministic TypeScript rules, and routes uncertainty to a
+human reviewer. It deliberately produces review findings rather than an
+automatic approval.
+
+**Tools used.** React 19 and TypeScript power the interface and validation
+logic; Vite builds the static application; `tesseract.js` supplies same-origin,
+browser-local OCR; Vitest and Testing Library cover unit and UI behavior; pnpm
+manages dependencies; GitHub Actions runs CI; and AWS Amplify Hosting serves
+the deployed static bundle.
+
+**Assumptions.** This proof of concept expects English label evidence, a
+modern browser, and reviewer-supplied application facts. Distilled spirits,
+beer, and wine share a bounded comparison workflow, not complete regulatory
+coverage. A human remains responsible for visual checks, exceptions, and the
+final compliance or COLA decision.
+
 ## Guided demo
 
 1. Start the app and select **Open guided demo** on the overview screen.
