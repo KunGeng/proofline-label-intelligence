@@ -220,6 +220,7 @@ export function App({ initialBatchItems }: AppProps) {
               error: undefined,
               progress: 0,
               durationMs: undefined,
+              shouldFocusReviewHeading: false,
               shouldFocusManualDisclosure: false,
             },
       );
@@ -238,6 +239,8 @@ export function App({ initialBatchItems }: AppProps) {
         imageUrl: objectUrl,
         objectUrl,
         progress: 0,
+        shouldFocusReviewHeading: false,
+        shouldFocusManualDisclosure: false,
       });
       setView('review');
     }
@@ -286,6 +289,7 @@ export function App({ initialBatchItems }: AppProps) {
               isNoUsableEvidence
                 ? 'No usable OCR evidence was produced. Inspect the original label, enter manual evidence, retry OCR, or retake a straight-on, evenly lit, glare-free photo.'
                 : 'OCR stopped after five seconds. The original label is ready for manual evidence review.',
+            shouldFocusReviewHeading: false,
             shouldFocusManualDisclosure: true,
             progress: undefined,
             durationMs: undefined,
@@ -309,6 +313,7 @@ export function App({ initialBatchItems }: AppProps) {
           progress: undefined,
           durationMs: output.error ? undefined : output.durationMs,
           error: output.error ? friendlyExtractionError(output.error) : undefined,
+          shouldFocusReviewHeading: output.outcome === 'completed' && !output.error,
           shouldFocusManualDisclosure: false,
         };
       });
@@ -325,6 +330,7 @@ export function App({ initialBatchItems }: AppProps) {
               phase: preserveDraft ? 'ready' : 'error',
               progress: undefined,
               error: 'OCR could not complete. Try a clearer image or begin a new evidence review.',
+              shouldFocusReviewHeading: false,
               shouldFocusManualDisclosure: false,
             }
       );

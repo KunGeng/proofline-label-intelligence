@@ -1289,6 +1289,11 @@ input:not([type="checkbox"]):not([type="file"])[aria-invalid="true"] {
   background: #f1f3ec;
 }
 
+.evidence-image-viewer__full-size:focus-visible {
+  outline: 3px solid var(--forest);
+  outline-offset: 3px;
+}
+
 .evidence-image-viewer__full-size > img,
 .evidence-image-viewer__full-size > div {
   display: block;

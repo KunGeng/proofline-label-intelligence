@@ -37,6 +37,19 @@ it('moves focus into supplied local evidence, zooms locally, and restores focus'
   ).toHaveFocus();
 });
 
+it('exposes the zoomed evidence viewport as a focusable named region', async () => {
+  const user = userEvent.setup();
+
+  render(<EvidenceImageViewer src="blob:label" alt="Label evidence" />);
+  fireEvent.load(screen.getByRole('img', { name: 'Label evidence' }));
+  await user.click(screen.getByRole('button', { name: /open full-size label evidence/i }));
+
+  const viewport = screen.getByRole('region', { name: /zoomed label evidence/i });
+  expect(viewport).toHaveAttribute('tabindex', '0');
+  viewport.focus();
+  expect(viewport).toHaveFocus();
+});
+
 it('keeps zoom within the local 1 to 3 times range and can display supplied fixture evidence', async () => {
   const user = userEvent.setup();
   const onEvidenceAvailabilityChange = vi.fn();

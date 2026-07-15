@@ -124,7 +124,14 @@ export function EvidenceImageViewer({
           </div>
         </div>
         <p className="evidence-image-viewer__zoom-level">Zoom: {zoom.toFixed(2)}×</p>
-        <div className="evidence-image-viewer__full-size">{fullSizeEvidence}</div>
+        <div
+          className="evidence-image-viewer__full-size"
+          role="region"
+          aria-label="Zoomed label evidence. Use arrow keys to pan the image."
+          tabIndex={0}
+        >
+          {fullSizeEvidence}
+        </div>
       </section>
     );
   }

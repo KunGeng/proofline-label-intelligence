@@ -2217,6 +2217,24 @@ it('reports the measured local extraction time for a real review', async () => {
   ).toBeInTheDocument();
 });
 
+it('focuses the completed live review heading after a submitted label', async () => {
+  const user = userEvent.setup();
+  vi.mocked(extractFromImage).mockResolvedValueOnce({
+    outcome: 'completed',
+    extraction: {},
+    rawText: 'OLD TOM',
+    source: 'ocr',
+  });
+
+  const submit = await fillManualReviewForm(user);
+  submit.focus();
+  expect(submit).toHaveFocus();
+  await user.keyboard('{Enter}');
+
+  const heading = await screen.findByRole('heading', { name: /old-tom\.png/i });
+  expect(heading).toHaveFocus();
+});
+
 it('never renders an approval claim', async () => {
   render(<App />);
 
